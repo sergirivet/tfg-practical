@@ -7,7 +7,7 @@ def kyber_keygen():
 
 def kyber_encapsulate(public_key):
     """Encapsula un secreto usando la clave pública Kyber."""
-    ciphertext, shared_secret = ML_KEM_512.encaps(public_key)
+    shared_secret, ciphertext = ML_KEM_512.encaps(public_key)
     return ciphertext, shared_secret
 
 def kyber_decapsulate(ciphertext, private_key):
