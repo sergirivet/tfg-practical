@@ -12,5 +12,5 @@ def kyber_encapsulate(public_key):
 
 def kyber_decapsulate(ciphertext, private_key):
     """Decapsula el secreto usando la clave privada Kyber."""
-    shared_secret = ML_KEM_512.decaps(ciphertext, private_key)
+    shared_secret = ML_KEM_512.decaps(private_key, ciphertext)
     return shared_secret
