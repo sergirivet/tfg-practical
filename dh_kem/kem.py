@@ -88,49 +88,82 @@ def int_to_bytes_le(x, length=32):
     return x.to_bytes(length, 'little')
 
 # --- Primitivas Diffie-Hellman (X25519 manual) ---
-def dh_generate_private_key(p):
-    """Generate a random 32-byte private key with clamping"""
-    raw = secrets.token_bytes(32)
-    return clamp_scalar(raw)
+# ============================================================================
+# X25519 Diffie-Hellman (RFC 7748)
+# ============================================================================
 
-def dh_generate_public_key(g, private_key, p):
-    """Compute public key: private_key * G (base point)"""
+def dh_keygen():
+    """Generate a fresh X25519 ephemeral key pair.
+    
+    Returns:
+        tuple: (private_key: bytes, public_key: bytes)
+            Both 32-byte values for X25519
+    """
+    raw = secrets.token_bytes(32)
+    private = clamp_scalar(raw)
+    public = dh_public_from_private(private)
+    return private, public
+
+def dh_public_from_private(private_key):
+    """Compute X25519 public key from private key.
+    
+    Args:
+        private_key: 32-byte private key (after clamping)
+    
+    Returns:
+        bytes: 32-byte X25519 public key (x-coordinate)
+    """
     k = bytes_to_int_le(private_key)
     result = x25519_scalar_mult(k, G25519)
     return int_to_bytes_le(result)
 
-def dh_compute_shared_secret(other_public, private_key, p):
-    """Compute shared secret: private_key * other_public"""
-    if isinstance(other_public, bytes):
-        u = bytes_to_int_le(other_public)
+def dh_shared_secret(private_key, public_key):
+    """Compute X25519 shared secret.
+    
+    Performs: private_key * public_key (scalar multiplication on curve)
+    
+    Args:
+        private_key: 32-byte private key
+        public_key: 32-byte public key (x-coordinate from other party)
+    
+    Returns:
+        bytes: 32-byte shared secret (x-coordinate)
+    """
+    if isinstance(public_key, bytes):
+        u = bytes_to_int_le(public_key)
     else:
-        u = other_public
+        u = public_key
     k = bytes_to_int_le(private_key)
     result = x25519_scalar_mult(k, u)
     return int_to_bytes_le(result)
 
-def dh_generate_keypair(p, g):
-    private = dh_generate_private_key(p)
-    public = dh_generate_public_key(g, private, p)
-    return private, public
+# ============================================================================
+# Legacy KEM functions (kept for backward compatibility with old tests)
+# Note: These are deprecated in favor of direct dh_keygen() + dh_shared_secret()
+# ============================================================================
 
-# --- DH-based KEM ---
 def kem_keygen(p, g):
-    """Servidor: genera clave estática"""
-    return dh_generate_keypair(p, g)
+    """DEPRECATED: Use dh_keygen() instead.
+    Generate X25519 key pair (ignores p, g parameters).
+    """
+    return dh_keygen()
 
 def kem_encapsulate(p, g, server_static_public, info=b"handshake context"):
-    """Cliente: encapsula y genera clave simétrica"""
-    client_ephimeral_private, client_ephimeral_public = dh_generate_keypair(p, g)
-    raw_secret = dh_compute_shared_secret(server_static_public, client_ephimeral_private, p)
+    """DEPRECATED: Use dh_keygen() + dh_shared_secret() instead.
+    Client-side: generate ephemeral key and compute shared secret.
+    """
+    client_ephemeral_private, client_ephemeral_public = dh_keygen()
+    raw_secret = dh_shared_secret(client_ephemeral_private, server_static_public)
     prk = hkdf_extract(None, raw_secret)
     session_key = hkdf_expand(prk, info, 32)
-    ciphertext = client_ephimeral_public
+    ciphertext = client_ephemeral_public
     return ciphertext, session_key
 
 def kem_decapsulate(p, g, ciphertext, server_static_private, info=b"handshake context"):
-    """Servidor: decapsula y obtiene la misma clave simétrica"""
-    raw_secret = dh_compute_shared_secret(ciphertext, server_static_private, p)
+    """DEPRECATED: Use dh_shared_secret() instead.
+    Server-side: decapsulate and compute shared secret.
+    """
+    raw_secret = dh_shared_secret(server_static_private, ciphertext)
     prk = hkdf_extract(None, raw_secret)
     session_key = hkdf_expand(prk, info, 32)
     return session_key

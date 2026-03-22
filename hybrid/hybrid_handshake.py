@@ -1,9 +1,39 @@
 from classic.hkdf import hkdf_extract, hkdf_expand
 
-def hybrid_session_key(dh_secret, pq_secret):
+def hybrid_session_key(dh_secret, pq_secret, context=b""):
+    """Derive hybrid session key combining classical and post-quantum secrets.
+    
+    This function:
+    1. Concatenates DH and Kyber shared secrets
+    2. Applies HKDF-Extract with no salt (defaults to 32 zero bytes)
+    3. Applies HKDF-Expand with context-specific info string
+    4. Returns 32-byte session key suitable for symmetric encryption/HMAC
+    
+    Args:
+        dh_secret (bytes): 32-byte X25519 shared secret
+        pq_secret (bytes): 32-byte ML-KEM-512 shared secret
+        context (bytes): Optional context string (e.g., session ID, algorithm negotiation)
+                        If provided, appended to info string. Default: empty.
+    
+    Returns:
+        bytes: 32-byte session key combining both secrets
+    
+    Security Note:
+        - If DH is broken (e.g., by quantum computer), Kyber provides security
+        - If Kyber is broken, DH provides security  
+        - Both must be broken for session key to be compromised (defense-in-depth)
+    """
+    # Concatenate both secrets
     combined = dh_secret + pq_secret
+    
+    # HKDF-Extract: derives PRK (pseudo-random key) from combined input
     prk = hkdf_extract(None, combined)
-    return hkdf_expand(prk, b"hybrid handshake", 32)
+    
+    # HKDF-Expand: derives final key material
+    # Info string includes context for domain separation (RFC 5869 recommendation)
+    info = b"hybrid handshake" + (b"|" + context if context else b"")
+    
+    return hkdf_expand(prk, info, 32)
 
 
 # ============================================================================

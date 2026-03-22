@@ -1,5 +1,5 @@
 """
-Test: Authenticated Hybrid Handshake with Digital Signatures
+Test: Authenticated Hybrid Handshake with Digital Signatures (Protocol 3.4)
 
 This test demonstrates the complete authenticated handshake flow:
 1. Server generates long-term signing keys (done once, reused across sessions)
@@ -10,9 +10,11 @@ This test demonstrates the complete authenticated handshake flow:
 6. Post-handshake: HMAC protects message integrity (signatures no longer used)
 
 Also tests that authentication failure is properly detected and aborted.
+
+This test validates Protocol 3.4 (Client-Server Hybrid Authenticated Handshake).
 """
 
-from dh_kem.kem import kem_keygen, kem_encapsulate, kem_decapsulate
+from dh_kem.kem import dh_keygen, dh_shared_secret, kem_keygen, kem_encapsulate, kem_decapsulate
 from pq_kem.kyber_kem import kyber_keygen, kyber_encapsulate, kyber_decapsulate
 from hybrid.hybrid_handshake import (
     hybrid_session_key,
@@ -24,8 +26,8 @@ from hybrid.hybrid_handshake import (
 from signatures.signatures import generate_keypair, sign, verify
 from classic.hmac import hmac_sha256
 
-# Demo parameters for DH (same as other tests)
-P_DEMO = 0xFFFFFFFB
+# Legacy demo parameters for DH (used in old test-style)
+P_DEMO = 0xFFFFFFFF
 G_DEMO = 5
 
 
@@ -59,31 +61,33 @@ def test_authenticated_hybrid_handshake():
     # =========================================================================
     print("\n--- Phase 1: Client Ephemeral Key Generation ---")
     
-    # Client generates ephemeral DH key pair
-    client_dh_private, client_dh_public = kem_keygen(P_DEMO, G_DEMO)
-    print(f"Client ephemeral DH public: {client_dh_public.hex()}")
+    # Client generates ephemeral X25519 key pair (using new dh_keygen)
+    client_dh_private, client_dh_public = dh_keygen()
     
-    # Client generates ephemeral Kyber key pair
+    # Client generates ephemeral Kyber/ML-KEM key pair
     client_kyber_public, client_kyber_private = kyber_keygen()
+    
+    print(f"Client ephemeral DH public: {client_dh_public.hex()}")
     print(f"Client ephemeral Kyber public: {client_kyber_public[:32].hex()}... (truncated)")
     
-    print("Client sends: client_dh_public, client_kyber_public → Server")
+    print("Client sends to Server: (pk_dh_c, pk_kyber_c)")
     
     # =========================================================================
     # PHASE 2: Server generates ephemeral keys and signs transcript
     # =========================================================================
     print("\n--- Phase 2: Server Ephemeral Key Generation & Signing ---")
     
-    # Server generates ephemeral DH key pair
-    server_dh_private, server_dh_public = kem_keygen(P_DEMO, G_DEMO)
-    print(f"Server ephemeral DH public: {server_dh_public.hex()}")
+    # Server generates ephemeral X25519 key pair (using new dh_keygen)
+    server_dh_private, server_dh_public = dh_keygen()
     
-    # Server generates ephemeral Kyber key pair
+    # Server generates ephemeral Kyber/ML-KEM key pair
     server_kyber_public, server_kyber_private = kyber_keygen()
+    
+    print(f"Server ephemeral DH public: {server_dh_public.hex()}")
     print(f"Server ephemeral Kyber public: {server_kyber_public[:32].hex()}... (truncated)")
     
     # Server signs the handshake transcript
-    # This proves the server endorses all four ephemeral public keys
+    # Signature proves server's identity and binds all four ephemeral public keys
     signature = server_sign_handshake(
         server_signing_private,
         client_dh_public, client_kyber_public,
@@ -91,7 +95,7 @@ def test_authenticated_hybrid_handshake():
     )
     print(f"Server signature: {signature[:32].hex()}... (truncated)")
     
-    print("Server sends: server_dh_public, server_kyber_public, signature → Client")
+    print("Server sends to Client: (pk_dh_s, pk_kyber_s, signature)")
     
     # =========================================================================
     # PHASE 3: Client verifies signature before deriving secrets
@@ -117,31 +121,35 @@ def test_authenticated_hybrid_handshake():
     # =========================================================================
     print("\n--- Phase 4: Shared Secret Derivation ---")
     
-    # DH key exchange
-    # Client computes: DH(client_private, server_public)
-    dh_ciphertext, dh_client_secret = kem_encapsulate(P_DEMO, G_DEMO, server_dh_public)
-    # Server computes: DH(server_private, ciphertext=client_ephemeral_public)
-    # Note: In actual ephemeral-ephemeral DH, both sides compute DH(their_private, other_public)
-    # The KEM abstraction here is slightly different but achieves same goal
-    
-    # For proper ephemeral-ephemeral DH, we need direct computation:
-    from dh_kem.kem import dh_compute_shared_secret
-    dh_client_secret = dh_compute_shared_secret(server_dh_public, client_dh_private, P_DEMO)
-    dh_server_secret = dh_compute_shared_secret(client_dh_public, server_dh_private, P_DEMO)
+    # DH key exchange (ephemeral-ephemeral)
+    # Client computes: DH(client_ephemeral_private, server_ephemeral_public)
+    dh_client_secret = dh_shared_secret(client_dh_private, server_dh_public)
+    # Server computes: DH(server_ephemeral_private, client_ephemeral_public)
+    dh_server_secret = dh_shared_secret(server_dh_private, client_dh_public)
     
     print(f"DH client secret: {dh_client_secret.hex()}")
     print(f"DH server secret: {dh_server_secret.hex()}")
-    assert dh_client_secret == dh_server_secret, "DH secrets should match"
-    print("✓ DH shared secrets match")
+    
+    if dh_client_secret == dh_server_secret:
+        print("✓ DH shared secrets match")
+    else:
+        print("✗ DH secrets DO NOT match - ERROR!")
+        return False
     
     # Kyber key exchange
+    # Client encapsulates: generates ciphertext that server can decapsulate
     kyber_ciphertext, kyber_client_secret = kyber_encapsulate(server_kyber_public)
+    # Server decapsulates: recovers same secret from ciphertext
     kyber_server_secret = kyber_decapsulate(kyber_ciphertext, server_kyber_private)
     
     print(f"Kyber client secret: {kyber_client_secret.hex()}")
     print(f"Kyber server secret: {kyber_server_secret.hex()}")
-    assert kyber_client_secret == kyber_server_secret, "Kyber secrets should match"
-    print("✓ Kyber shared secrets match")
+    
+    if kyber_client_secret == kyber_server_secret:
+        print("✓ Kyber shared secrets match")
+    else:
+        print("✗ Kyber secrets DO NOT match - ERROR!")
+        return False
     
     # =========================================================================
     # PHASE 5: Derive hybrid session key
@@ -261,8 +269,8 @@ def test_authenticated_hybrid_session_key_function():
     )
     
     # Compute shared secrets
-    from dh_kem.kem import dh_compute_shared_secret
-    dh_secret = dh_compute_shared_secret(server_dh_public, client_dh_private, P_DEMO)
+    from dh_kem.kem import dh_shared_secret
+    dh_secret = dh_shared_secret(client_dh_private, server_dh_public)
     kyber_ct, kyber_secret = kyber_encapsulate(server_kyber_public)
     
     print("\n--- Using authenticated_hybrid_session_key() ---")

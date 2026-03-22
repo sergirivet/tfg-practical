@@ -1,8 +1,9 @@
+from typing import Optional
 from classic.hmac import hmac_sha256
 
 HASH_OUTPUT_LEN = 32
 
-def hkdf_extract(salt: bytes | None, ikm: bytes) -> bytes:
+def hkdf_extract(salt: Optional[bytes], ikm: bytes) -> bytes:
     if salt is None or len(salt) == 0:
         salt = bytes([0] * HASH_OUTPUT_LEN)
     return hmac_sha256(salt, ikm)
