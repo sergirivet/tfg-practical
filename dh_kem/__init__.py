@@ -1,8 +1,10 @@
+# X25519 DH KEM module
 from .kem import (
-    dh_generate_private_key,
-    dh_generate_public_key,
-    dh_compute_shared_secret,
-    dh_generate_keypair,
+    # New API
+    dh_keygen,
+    dh_shared_secret,
+    dh_public_from_private,
+    # Legacy functions (deprecated - backward compat)
     kem_keygen,
     kem_encapsulate,
     kem_decapsulate
