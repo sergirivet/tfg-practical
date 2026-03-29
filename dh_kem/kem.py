@@ -87,7 +87,7 @@ def int_to_bytes_le(x, length=32):
     """Convert integer to bytes (little-endian)"""
     return x.to_bytes(length, 'little')
 
-# --- Primitivas Diffie-Hellman (X25519 manual) ---
+# --- Diffie-Hellman Primitives (X25519 Implementation) ---
 # ============================================================================
 # X25519 Diffie-Hellman (RFC 7748)
 # ============================================================================

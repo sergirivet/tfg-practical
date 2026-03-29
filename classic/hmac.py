@@ -6,26 +6,25 @@ def sha256(data):
 
 def hmac_sha256(key, message):
     """
-    Implementación HMAC-SHA256 manual.
-    Garantiza autenticidad e integridad de un mensaje.
+    Compute HMAC-SHA256 to ensure message authenticity and integrity.
     """
-    block_size = 64  # SHA-256 usa bloques de 64 bytes
+    block_size = 64  # SHA-256 block size in bytes
 
-    # Normalizar clave
+    # Normalize key to block size (hash if too long, pad with zeros if too short)
     if len(key) > block_size:
         key = sha256(key)
     if len(key) < block_size:
         key = key + b'\x00' * (block_size - len(key))
 
-    # Crear ipad y opad
+    # Create inner and outer padding
     ipad = bytes([0x36] * block_size)
     opad = bytes([0x5C] * block_size)
 
-    # Inner hash
+    # Compute inner hash
     inner_input = bytes([k ^ i for k, i in zip(key, ipad)]) + message
     inner_hash = sha256(inner_input)
 
-    # Outer hash
+    # Compute outer hash
     outer_input = bytes([k ^ o for k, o in zip(key, opad)]) + inner_hash
     final_hash = sha256(outer_input)
 
