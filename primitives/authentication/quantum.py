@@ -21,7 +21,7 @@ Usage Context:
 from dilithium_py.ml_dsa import ML_DSA_44
 
 # ============================================================================
-# NEW CODE: Post-Quantum Digital Signature Interface
+# Post-Quantum Digital Signature Interface (ML-DSA-44 / Dilithium)
 # ============================================================================
 
 def generate_keypair():

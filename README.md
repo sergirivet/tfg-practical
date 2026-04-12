@@ -1,67 +1,109 @@
 # Hybrid Post-Quantum Authenticated Handshake Protocol
 
-Implementación Python de protocolos de handshake criptográficos clásicos, post-cuánticos e híbridos.
+Implementación Python de protocolos de handshake criptográficos clásicos, post-cuánticos e híbridos con autenticación DUAL.
 
 ## Overview
 
 Este proyecto implementa un protocolo de handshake autenticado que combina:
-- **Criptografía clásica**: X25519 (Diffie-Hellman de curvas elípticas)
+- **Criptografía clásica**: X25519 (Diffie-Hellman de curvas elípticas) + ECDSA (P-256)
 - **Criptografía post-cuántica**: ML-KEM-512 (Kyber) + ML-DSA-44 (Dilithium)
-- **Híbrido seguro**: Protocolo 3.4 que autentica ambas claves efímeras
+- **Híbrido seguro**: Protocolo 3.4 con DUAL AUTENTICACIÓN (clásica + post-cuántica)
 
-El objetivo es validar un enfoque defensivo en profundidad contra amenazas cuánticas mientras se mantiene la compatibilidad con algoritmos de confianza probada.
+El objetivo es validar un enfoque defensivo en profundidad (defense-in-depth) contra amenazas cuánticas:
+- Si una familia de firmas se ve comprometida, la otra sigue proporcionando seguridad
+- Ambas firmas deben verificarse exitosamente para una autenticación completa
+- Mantiene compatibilidad con algoritmos clásicos probados
 
 ## Características
 
 **Implementación completa**:
 - Handshake clásico DH (X25519)
 - Handshake post-cuántico (Kyber + Dilithium)
-- Handshake híbrido autenticado 4-fase (Protocolo 3.4)
+- **Handshake híbrido autenticado DUAL-SIGNATURE** (Protocolo 3.4)
+  - Firma 1: ECDSA P-256 (autenticación clásica)
+  - Firma 2: ML-DSA-44 Dilithium (autenticación post-cuántica)
 - Derivación segura de claves (HKDF-SHA256)
-- Autenticación digital con ML-DSA-44
+- Protección de integridad de mensajes (HMAC-SHA256)
 
 **Criptografía estándar**:
 - X25519: RFC 7748 (Montgomery ladder)
 - HKDF: RFC 5869 (HMAC-based KDF)
 - HMAC-SHA256: RFC 2104
+- ECDSA P-256: NIST FIPS 186-4 (Sig.auth. clásica)
 - ML-KEM-512 (Kyber): NIST FIPS 203
 - ML-DSA-44 (Dilithium): NIST FIPS 204
 
 **Suite de tests exhaustiva**:
 - Handshake completo clásico
 - Handshake híbrido sin autenticación
-- Handshake autenticado (Protocolo 3.4)
-- Validación de firmas digitales
+- Handshake autenticado DUAL-SIGNATURE (Protocolo 3.4)
+- Pruebas de detección de MITM con ambos esquemas
+- Validación de firmas individuales y híbridas
 
 ## Estructura del Proyecto
 
 ```
 tfg-practical/
-├── classic/                    # Criptografía clásica
-│   ├── hmac.py                # HMAC-SHA256 (RFC 2104)
-│   └── hkdf.py                # HKDF-SHA256 (RFC 5869)
+├── classic/                           # Criptografía clásica
+│   ├── hmac.py                        # HMAC-SHA256 (RFC 2104)
+│   └── hkdf.py                        # HKDF-SHA256 (RFC 5869)
 │
-├── dh_kem/                     # Key Encapsulation Mechanism clásico
-│   └── kem.py                 # X25519 Diffie-Hellman
+├── dh_kem/                            # Key Encapsulation Mechanism clásico
+│   └── kem.py                         # X25519 Diffie-Hellman
 │
-├── pq_kem/                     # Key Encapsulation Mechanism post-cuántico
-│   └── kyber_kem.py           # ML-KEM-512 (Kyber)
+├── pq_kem/                            # Key Encapsulation Mechanism post-cuántico
+│   └── kyber_kem.py                   # ML-KEM-512 (Kyber)
 │
-├── signatures/                 # Esquema de firma digital
-│   └── signatures.py          # ML-DSA-44 (Dilithium)
+├── signatures/                        # Esquemas de firma digital HÍBRIDO
+│   ├── signatures.py                  # ML-DSA-44 (Dilithium - post-cuántico)
+│   └── ecdsa.py                       # ECDSA P-256 (clásico)
 │
-├── hybrid/                      # Protocolo híbrido
-│   ├── hybrid_handshake.py    # Lógica del protocolo
-│   ├── client.py              # Implementación cliente
-│   └── server.py              # Implementación servidor
+├── hybrid/                            # Protocolo híbrido DUAL-AUTH
+│   ├── hybrid_handshake.py            # Lógica del protocolo (dual signatures)
+│   ├── client.py                      # Implementación cliente
+│   └── server.py                      # Implementación servidor
 │
-├── tests/                       # Suite de pruebas
-│   ├── test_full_handshake.py
-│   ├── test_hybrid_handshake.py
-│   ├── test_authenticated_handshake.py
-│   └── test_protocol_3_4.py
+├── tests/                             # Suite completa de pruebas
+│   ├── test_full_handshake.py         # Prueba DH clásico
+│   ├── test_hybrid_handshake.py       # Prueba híbrido sin auth
+│   ├── test_authenticated_handshake.py # Prueba dual-signature
+│   ├── test_protocol_3_4.py           # Protocolo 3.4 (clientes/servidores)
+│   └── test_hybrid_signatures.py      # Tests individuales ECDSA + Dilithium
 │
-└── README.md                    # Este archivo
+└── README.md                          # Este archivo
+```
+
+## Autenticación Híbrida (DUAL-SIGNATURE)
+
+El protocolo 3.4 implementa autenticación dual donde el servidor firma el handshake con AMBOS esquemas:
+
+```
+PHASE 0: Setup
+  Server: genera keypairs DUALES (ECDSA + Dilithium)
+  Client: obtiene ambas public keys a través de canal trusted
+
+PHASE 1: Client Init
+  Client: genera ephemeral keys y los envía al server
+
+PHASE 2: Server Response & DUAL Signing
+  Server: genera ephemeral keys y FIRMA con ambos esquemas
+  transcript = concatenate(client_ephemeral_keys || server_ephemeral_keys)
+  signature_ecdsa = ECDSA-P256(transcript)
+  signature_dilithium = ML-DSA-44(transcript)
+
+PHASE 3: Dual Verification  
+  Client: VERIFICA AMBAS firmas
+  ✓ Si ambas verifican: handshake autenticado (defense-in-depth)
+  ✗ Si alguna falla: handshake ABORTADO (MITM detectado)
+
+PHASE 4: Key Derivation
+  Ambas partes: derivan session key (solo después de verificar ambas firmas)
+  - DH shared secret: X25519 (efímero)
+  - Kyber shared secret: ML-KEM-512 (efímero)  
+  - Hybrid session key: HKDF(DH secret || Kyber secret)
+
+POST-HANDSHAKE: Message Protection
+  - HMAC-SHA256: integridad de messages (ya no se usan firmas)
 ```
 
 ## Requisitos

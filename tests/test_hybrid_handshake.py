@@ -8,10 +8,10 @@ For authenticated version with signatures, see test_authenticated_handshake.py
 and test_protocol_3_4.py
 """
 
-from dh_kem.kem import kem_keygen, kem_encapsulate, kem_decapsulate
-from pq_kem.kyber_kem import kyber_keygen, kyber_encapsulate, kyber_decapsulate
-from hybrid.hybrid_handshake import hybrid_session_key
-from classic.hmac import hmac_sha256
+from primitives.kem.classical import kem_keygen, kem_encapsulate, kem_decapsulate
+from primitives.kem.quantum import kyber_keygen, kyber_encapsulate, kyber_decapsulate
+from protocol.hybrid_handshake import hybrid_session_key
+from primitives.kdf.hmac import hmac_sha256
 
 P_DEMO = 0xFFFFFFFB
 G_DEMO = 5

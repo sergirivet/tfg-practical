@@ -1,5 +1,5 @@
 from typing import Optional
-from classic.hmac import hmac_sha256
+from primitives.kdf.hmac import hmac_sha256
 
 HASH_OUTPUT_LEN = 32
 
