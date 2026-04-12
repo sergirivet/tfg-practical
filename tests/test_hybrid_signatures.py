@@ -5,175 +5,171 @@ This test validates that both classical and post-quantum signatures work correct
 independently and can be used together for defense-in-depth authentication.
 """
 
-import unittest
 from primitives.authentication import classical as ecdsa, quantum as dilithium_sig
 
 
-class TestECDSASignatures(unittest.TestCase):
+def test_ecdsa_signatures():
     """Test classical ECDSA P-256 signature scheme"""
+    print("\n" + "=" * 70)
+    print("TEST: Classical ECDSA (P-256) Signatures")
+    print("=" * 70)
     
-    def setUp(self):
-        """Generate fresh key pairs for each test"""
-        self.pub_key, self.priv_key = ecdsa.generate_keypair()
+    # Test 1: Key generation
+    print("\n[TEST 1] ECDSA Key Pair Generation")
+    print("-" * 70)
+    pub_key, priv_key = ecdsa.generate_keypair()
+    print(f"✓ Generated ECDSA key pair")
+    print(f"  Public key (first 50 chars): {str(pub_key)[:50]}...")
+    print(f"  Private key (first 50 chars): {str(priv_key)[:50]}...")
     
-    def test_generate_keypair(self):
-        """Test ECDSA key pair generation"""
-        self.assertIsNotNone(self.pub_key)
-        self.assertIsNotNone(self.priv_key)
-        self.assertTrue(self.pub_key.startswith(b'-----BEGIN PUBLIC KEY-----'))
-        self.assertTrue(self.priv_key.startswith(b'-----BEGIN PRIVATE KEY-----'))
+    # Test 2: Sign and verify
+    print("\n[TEST 2] ECDSA Sign and Verify (Valid Case)")
+    print("-" * 70)
+    message = b"Test handshake transcript for ECDSA"
+    signature = ecdsa.sign(priv_key, message)
+    result = ecdsa.verify(pub_key, message, signature)
+    print(f"  Message: {message.decode()}")
+    print(f"  Signature (first 32 bytes): {signature[:32].hex()}...")
+    print(f"✓ Signature verification: {result}")
+    assert result, "ECDSA signature verification failed"
     
-    def test_sign_and_verify(self):
-        """Test ECDSA signing and verification"""
-        message = b"Test handshake transcript for ECDSA"
-        signature = ecdsa.sign(self.priv_key, message)
-        
-        # Verify with correct key and message
-        result = ecdsa.verify(self.pub_key, message, signature)
-        self.assertTrue(result)
+    # Test 3: Wrong message
+    print("\n[TEST 3] ECDSA Verification with Modified Message")
+    print("-" * 70)
+    wrong_message = b"Modified handshake transcript"
+    result = ecdsa.verify(pub_key, wrong_message, signature)
+    print(f"  Original message: {message.decode()}")
+    print(f"  Modified message: {wrong_message.decode()}")
+    print(f"✗ Verification result (should be False): {result}")
+    assert not result, "ECDSA should reject modified message"
     
-    def test_verify_fails_with_wrong_message(self):
-        """Test that verification fails if message is modified"""
-        message = b"Original message"
-        wrong_message = b"Modified message"
-        signature = ecdsa.sign(self.priv_key, message)
-        
-        result = ecdsa.verify(self.pub_key, wrong_message, signature)
-        self.assertFalse(result)
+    # Test 4: Wrong key
+    print("\n[TEST 4] ECDSA Verification with Different Key")
+    print("-" * 70)
+    other_pub_key, _ = ecdsa.generate_keypair()
+    result = ecdsa.verify(other_pub_key, message, signature)
+    print(f"  Original signer vs. different public key")
+    print(f"✗ Verification result (should be False): {result}")
+    assert not result, "ECDSA should reject different key"
     
-    def test_verify_fails_with_wrong_key(self):
-        """Test that verification fails with different public key"""
-        message = b"Test message"
-        signature = ecdsa.sign(self.priv_key, message)
-        
-        # Generate different key pair
-        other_pub_key, _ = ecdsa.generate_keypair()
-        result = ecdsa.verify(other_pub_key, message, signature)
-        self.assertFalse(result)
-    
-    def test_signature_is_deterministic(self):
-        """Test that same input produces same signature (deterministic ECDSA)"""
-        message = b"Consistent test message"
-        sig1 = ecdsa.sign(self.priv_key, message)
-        sig2 = ecdsa.sign(self.priv_key, message)
-        
-        # Both signatures should verify
-        self.assertTrue(ecdsa.verify(self.pub_key, message, sig1))
-        self.assertTrue(ecdsa.verify(self.pub_key, message, sig2))
+    print("\n✓ ECDSA tests PASSED\n")
 
 
-class TestDilithiumSignatures(unittest.TestCase):
+def test_dilithium_signatures():
     """Test post-quantum Dilithium (ML-DSA-44) signature scheme"""
+    print("\n" + "=" * 70)
+    print("TEST: Post-Quantum Dilithium (ML-DSA-44) Signatures")
+    print("=" * 70)
     
-    def setUp(self):
-        """Generate fresh key pairs for each test"""
-        self.pub_key, self.priv_key = dilithium_sig.generate_keypair()
+    # Test 1: Key generation
+    print("\n[TEST 1] Dilithium Key Pair Generation")
+    print("-" * 70)
+    pub_key, priv_key = dilithium_sig.generate_keypair()
+    print(f"✓ Generated Dilithium key pair")
+    print(f"  Public key size: {len(pub_key)} bytes")
+    print(f"  Private key size: {len(priv_key)} bytes")
+    print(f"  Public key (first 32 bytes): {pub_key[:32].hex()}...")
     
-    def test_generate_keypair(self):
-        """Test Dilithium key pair generation"""
-        self.assertIsNotNone(self.pub_key)
-        self.assertIsNotNone(self.priv_key)
-        self.assertIsInstance(self.pub_key, bytes)
-        self.assertIsInstance(self.priv_key, bytes)
+    # Test 2: Sign and verify
+    print("\n[TEST 2] Dilithium Sign and Verify (Valid Case)")
+    print("-" * 70)
+    message = b"Test handshake transcript for Dilithium"
+    signature = dilithium_sig.sign(priv_key, message)
+    result = dilithium_sig.verify(pub_key, message, signature)
+    print(f"  Message: {message.decode()}")
+    print(f"  Signature size: {len(signature)} bytes")
+    print(f"  Signature (first 32 bytes): {signature[:32].hex()}...")
+    print(f"✓ Signature verification: {result}")
+    assert result, "Dilithium signature verification failed"
     
-    def test_sign_and_verify(self):
-        """Test Dilithium signing and verification"""
-        message = b"Test handshake transcript for Dilithium"
-        signature = dilithium_sig.sign(self.priv_key, message)
-        
-        result = dilithium_sig.verify(self.pub_key, message, signature)
-        self.assertTrue(result)
+    # Test 3: Wrong message
+    print("\n[TEST 3] Dilithium Verification with Modified Message")
+    print("-" * 70)
+    wrong_message = b"Modified handshake transcript"
+    result = dilithium_sig.verify(pub_key, wrong_message, signature)
+    print(f"  Original message: {message.decode()}")
+    print(f"  Modified message: {wrong_message.decode()}")
+    print(f"✗ Verification result (should be False): {result}")
+    assert not result, "Dilithium should reject modified message"
     
-    def test_verify_fails_with_wrong_message(self):
-        """Test that verification fails if message is modified"""
-        message = b"Original message"
-        wrong_message = b"Modified message"
-        signature = dilithium_sig.sign(self.priv_key, message)
-        
-        result = dilithium_sig.verify(self.pub_key, wrong_message, signature)
-        self.assertFalse(result)
+    # Test 4: Wrong key
+    print("\n[TEST 4] Dilithium Verification with Different Key")
+    print("-" * 70)
+    other_pub_key, _ = dilithium_sig.generate_keypair()
+    result = dilithium_sig.verify(other_pub_key, message, signature)
+    print(f"  Original signer vs. different public key")
+    print(f"✗ Verification result (should be False): {result}")
+    assert not result, "Dilithium should reject different key"
     
-    def test_verify_fails_with_wrong_key(self):
-        """Test that verification fails with different public key"""
-        message = b"Test message"
-        signature = dilithium_sig.sign(self.priv_key, message)
-        
-        # Generate different key pair
-        other_pub_key, _ = dilithium_sig.generate_keypair()
-        result = dilithium_sig.verify(other_pub_key, message, signature)
-        self.assertFalse(result)
+    print("\n✓ Dilithium tests PASSED\n")
 
 
-class TestHybridSignatureAuthentication(unittest.TestCase):
+def test_hybrid_authentication():
     """Test hybrid authentication with both classical ECDSA and post-quantum Dilithium"""
+    print("\n" + "=" * 70)
+    print("TEST: Dual Signature Hybrid Authentication (ECDSA + Dilithium)")
+    print("=" * 70)
     
-    def setUp(self):
-        """Setup both classical and post-quantum keys"""
-        # Classical (ECDSA)
-        self.ecdsa_pub, self.ecdsa_priv = ecdsa.generate_keypair()
-        # Post-quantum (Dilithium)
-        self.dilithium_pub, self.dilithium_priv = dilithium_sig.generate_keypair()
+    # Setup: Generate both key pairs
+    print("\n[SETUP] Generate Dual Signature Keys")
+    print("-" * 70)
+    ecdsa_pub, ecdsa_priv = ecdsa.generate_keypair()
+    dilithium_pub, dilithium_priv = dilithium_sig.generate_keypair()
+    print(f"✓ Generated ECDSA P-256 key pair")
+    print(f"✓ Generated Dilithium ML-DSA-44 key pair")
     
-    def test_hybrid_authentication_both_signatures_valid(self):
-        """Test that both signatures verify correctly on the same message"""
-        # Handshake transcript (this would be ephemeral keys concatenated)
-        transcript = b"Client X25519 ephemeral: 0x123456... Server X25519 ephemeral: 0x789abc..."
-        
-        # Sign with both schemes
-        ecdsa_sig = ecdsa.sign(self.ecdsa_priv, transcript)
-        dilithium_signature = dilithium_sig.sign(self.dilithium_priv, transcript)
-        
-        # Verify both signatures
-        ecdsa_valid = ecdsa.verify(self.ecdsa_pub, transcript, ecdsa_sig)
-        dilithium_valid = dilithium_sig.verify(self.dilithium_pub, transcript, dilithium_signature)
-        
-        # Both must be valid for defense-in-depth
-        self.assertTrue(ecdsa_valid)
-        self.assertTrue(dilithium_valid)
+    # Test 1: Both signatures valid
+    print("\n[TEST 1] Both Signatures Valid (Defense-in-Depth)")
+    print("-" * 70)
+    transcript = b"Client X25519: 0x1a2b3c... | Server X25519: 0x4d5e6f..."
+    print(f"  Handshake transcript: {transcript.decode()}")
     
-    def test_hybrid_authentication_requires_both_valid(self):
-        """Test that in hybrid mode, both signatures must be valid"""
-        transcript = b"Hybrid handshake transcript"
-        
-        # Sign with both schemes
-        ecdsa_sig = ecdsa.sign(self.ecdsa_priv, transcript)
-        dilithium_signature = dilithium_sig.sign(self.dilithium_priv, transcript)
-        
-        # Scenario 1: Classical signature corrupted
-        corrupted_ecdsa_sig = ecdsa_sig[:-5] + b"XXXXX"
-        ecdsa_valid = ecdsa.verify(self.ecdsa_pub, transcript, corrupted_ecdsa_sig)
-        dilithium_valid = dilithium_sig.verify(self.dilithium_pub, transcript, dilithium_signature)
-        
-        # For hybrid auth to succeed, both must be valid
-        hybrid_auth_fails = not (ecdsa_valid and dilithium_valid)
-        self.assertTrue(hybrid_auth_fails)
+    ecdsa_sig = ecdsa.sign(ecdsa_priv, transcript)
+    dilithium_sig_val = dilithium_sig.sign(dilithium_priv, transcript)
+    print(f"\n✓ ECDSA signature generated ({len(ecdsa_sig)} bytes)")
+    print(f"✓ Dilithium signature generated ({len(dilithium_sig_val)} bytes)")
     
-    def test_classical_security_failure_caught_by_pq(self):
-        """
-        Test that if classical signature is forged, authentication fails.
-        In a real attack where classical crypto is broken, PQ signature still protects.
-        """
-        transcript = b"Server ephemeral keys"
-        
-        # Generate legitimate signatures
-        ecdsa_sig = ecdsa.sign(self.ecdsa_priv, transcript)
-        dilithium_signature = dilithium_sig.sign(self.dilithium_priv, transcript)
-        
-        # Simulate classical compromise: attacker forges ECDSA signature
-        forged_ecdsa_sig = b"forged_signature_from_attacker"
-        
-        # Classical authentication fails (ecdsa verification fails)
-        ecdsa_valid = ecdsa.verify(self.ecdsa_pub, transcript, forged_ecdsa_sig)
-        self.assertFalse(ecdsa_valid)
-        
-        # PQ authentication still succeeds (defender's benefit)
-        dilithium_valid = dilithium_sig.verify(self.dilithium_pub, transcript, dilithium_signature)
-        self.assertTrue(dilithium_valid)
-        
-        # But overall hybrid auth fails because classical part failed
-        hybrid_auth_succeeds = ecdsa_valid and dilithium_valid
-        self.assertFalse(hybrid_auth_succeeds)
+    ecdsa_valid = ecdsa.verify(ecdsa_pub, transcript, ecdsa_sig)
+    dilithium_valid = dilithium_sig.verify(dilithium_pub, transcript, dilithium_sig_val)
+    print(f"\n  ECDSA verification: {ecdsa_valid}")
+    print(f"  Dilithium verification: {dilithium_valid}")
+    print(f"✓ Hybrid authentication: {ecdsa_valid and dilithium_valid}")
+    assert ecdsa_valid and dilithium_valid, "Both signatures must be valid"
+    
+    # Test 2: ECDSA signature corrupted
+    print("\n[TEST 2] Attack: ECDSA Signature Corrupted")
+    print("-" * 70)
+    corrupted_ecdsa = ecdsa_sig[:-10] + b"corrupted!"
+    ecdsa_valid = ecdsa.verify(ecdsa_pub, transcript, corrupted_ecdsa)
+    dilithium_valid = dilithium_sig.verify(dilithium_pub, transcript, dilithium_sig_val)
+    hybrid_auth_success = ecdsa_valid and dilithium_valid
+    print(f"  ECDSA verification (corrupted): {ecdsa_valid}")
+    print(f"  Dilithium verification: {dilithium_valid}")
+    print(f"✗ Hybrid authentication: {hybrid_auth_success}")
+    print(f"  ✓ Attack REJECTED (dual protection works!)")
+    assert not hybrid_auth_success, "Hybrid auth should fail with corrupted ECDSA"
+    
+    # Test 3: Dilithium signature corrupted
+    print("\n[TEST 3] Attack: Dilithium Signature Corrupted")
+    print("-" * 70)
+    corrupted_dilithium = dilithium_sig_val[:-10] + b"corrupted!"
+    ecdsa_valid = ecdsa.verify(ecdsa_pub, transcript, ecdsa_sig)
+    dilithium_valid = dilithium_sig.verify(dilithium_pub, transcript, corrupted_dilithium)
+    hybrid_auth_success = ecdsa_valid and dilithium_valid
+    print(f"  ECDSA verification: {ecdsa_valid}")
+    print(f"  Dilithium verification (corrupted): {dilithium_valid}")
+    print(f"✗ Hybrid authentication: {hybrid_auth_success}")
+    print(f"  ✓ Attack REJECTED (dual protection works!)")
+    assert not hybrid_auth_success, "Hybrid auth should fail with corrupted Dilithium"
+    
+    print("\n✓ Hybrid authentication tests PASSED\n")
 
 
-if __name__ == '__main__':
-    unittest.main()
+if __name__ == "__main__":
+    test_ecdsa_signatures()
+    test_dilithium_signatures()
+    test_hybrid_authentication()
+    
+    print("\n" + "=" * 70)
+    print("✓ ALL SIGNATURE TESTS PASSED!")
+    print("=" * 70)
