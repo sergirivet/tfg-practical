@@ -3,12 +3,12 @@ Client implementation for Hybrid Post-Quantum Authenticated Handshake Protocol (
 
 This module provides the Client class which encapsulates:
 - PHASE 1: Ephemeral key generation
-- PHASE 3: Server signature verification  
+- PHASE 3: Dual signature verification (classical ECDSA + post-quantum Dilithium)
 - PHASE 4: Shared secret computation and hybrid session key derivation
 """
 
-from dh_kem.kem import dh_keygen, dh_shared_secret
-from pq_kem.kyber_kem import kyber_keygen, kyber_encapsulate
+from primitives.kem.classical import dh_keygen, dh_shared_secret
+from primitives.kem.quantum import kyber_keygen, kyber_encapsulate
 from .hybrid_handshake import client_verify_handshake, hybrid_session_key, AuthenticationError
 
 
@@ -18,29 +18,41 @@ class Client:
     Encapsulates all client-side operations:
     1. Generate ephemeral keys (PHASE 1)
     2. Send ephemeral public keys to server
-    3. Receive server response and verify signature (PHASE 3)
+    3. Receive server response and verify DUAL signatures (PHASE 3)
     4. Compute shared secrets and derive session key (PHASE 4)
     
+    Features defense-in-depth authentication with both classical (ECDSA) and
+    post-quantum (Dilithium) signature schemes.
+    
     Attributes:
-        server_trust_key (bytes): Server's long-term ML-DSA signing public key
-                                 (obtained through trusted channel, e.g., certificate)
-        session_key (bytes): Derived 32-byte hybrid session key (set after successful handshake)
+        server_trust_key_dilithium (bytes): Server's long-term ML-DSA signing public key
+                                            (obtained through trusted channel)
+        server_trust_key_ecdsa (bytes): Server's long-term ECDSA signing public key
+                                        (obtained through trusted channel)
+        session_key (bytes): Derived 32-byte hybrid session key (set after handshake)
     """
     
-    def __init__(self, server_signing_public_key):
-        """Initialize client with server's trusted public signing key.
+    def __init__(self, server_signing_public_key_dilithium, server_signing_public_key_ecdsa):
+        """Initialize client with server's trusted public signing keys (both classical and PQ).
         
         Args:
-            server_signing_public_key (bytes): Server's long-term ML-DSA-44 public key.
-                                             Must be obtained from trusted source.
+            server_signing_public_key_dilithium (bytes): Server's long-term ML-DSA-44 public key.
+                                                        Must be obtained from trusted source
+                                                        (e.g., PKI certificate).
+            server_signing_public_key_ecdsa (bytes): Server's long-term ECDSA public key.
+                                                     Must be obtained from trusted source
+                                                     (e.g., PKI certificate).
         
         Raises:
-            ValueError: If key is None or empty
+            ValueError: If either key is None or empty
         """
-        if not server_signing_public_key:
-            raise ValueError("Server signing public key cannot be None or empty")
+        if not server_signing_public_key_dilithium:
+            raise ValueError("Server Dilithium signing public key cannot be None or empty")
+        if not server_signing_public_key_ecdsa:
+            raise ValueError("Server ECDSA signing public key cannot be None or empty")
         
-        self.server_trust_key = server_signing_public_key
+        self.server_trust_key_dilithium = server_signing_public_key_dilithium
+        self.server_trust_key_ecdsa = server_signing_public_key_ecdsa
         self.session_key = None
         
         # Ephemeral keys (set in phase1)
@@ -72,19 +84,22 @@ class Client:
         
         return self._pk_dh, self._pk_kyber
     
-    def phase3_verify_phase4_derive(self, server_pk_dh, server_pk_kyber, server_signature):
-        """PHASE 3-4: Verify server signature and derive session key.
+    def phase3_verify_phase4_derive(self, server_pk_dh, server_pk_kyber, 
+                                    server_signature_dilithium, server_signature_ecdsa):
+        """PHASE 3-4: Verify DUAL signatures and derive session key.
         
         This function performs:
-        1. PHASE 3: Reconstruct handshake transcript and verify server's signature
-                   against server's long-term public key
-        2. PHASE 4: If verification succeeds, compute shared secrets and derive
+        1. PHASE 3: Reconstruct handshake transcript and verify BOTH signatures
+                   (classical ECDSA + post-quantum Dilithium) against server's
+                   long-term public keys. BOTH must verify for authentication to succeed.
+        2. PHASE 4: If both signatures verify, compute shared secrets and derive
                    the hybrid session key
         
         Args:
             server_pk_dh (bytes): Server's ephemeral X25519 public key
             server_pk_kyber (bytes): Server's ephemeral ML-KEM-512 public key
-            server_signature (bytes): ML-DSA-44 signature over handshake transcript
+            server_signature_dilithium (bytes): ML-DSA-44 signature over handshake transcript
+            server_signature_ecdsa (bytes): ECDSA P-256 signature over handshake transcript
         
         Returns:
             tuple: (session_key: bytes, kyber_ciphertext: bytes)
@@ -92,23 +107,25 @@ class Client:
                    1088-byte Kyber ciphertext (needed by server to decapsulate)
         
         Raises:
-            AuthenticationError: If signature verification fails
+            AuthenticationError: If either signature verification fails
                                 (indicates possible MITM attack; handshake aborted)
         
         Security Properties:
             - Forward Secrecy: Uses ephemeral keys; compromise of long-term keys
                              does not affect past sessions
-            - Authentication: Signature proves server possession of signing key
+            - Dual Authentication: Both classical and PQ signatures must verify
+            - Defense-in-Depth: If one signature scheme is broken, the other remains secure
             - Integrity: Transcript binding prevents key substitution attacks
         """
         
-        # PHASE 3: Verify server's signature
-        # This MUST succeed before we use any derived secrets
+        # PHASE 3: Verify BOTH signatures (classical + post-quantum)
+        # This MUST succeed for both schemes before we use any derived secrets
         client_verify_handshake(
-            self.server_trust_key,
+            self.server_trust_key_dilithium,
+            self.server_trust_key_ecdsa,
             self._pk_dh, self._pk_kyber,
             server_pk_dh, server_pk_kyber,
-            server_signature
+            server_signature_dilithium, server_signature_ecdsa
         )
         
         # PHASE 4: Compute shared secrets

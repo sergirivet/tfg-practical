@@ -2,13 +2,13 @@
 Server implementation for Hybrid Post-Quantum Authenticated Handshake Protocol (3.4)
 
 This module provides the Server class which encapsulates:
-- PHASE 0: Long-term signing key setup (one-time)
-- PHASE 2: Ephemeral key generation and signature creation
+- PHASE 0: Long-term signing key setup (one-time, both classical and PQ)
+- PHASE 2: Ephemeral key generation and dual signature creation (ECDSA + Dilithium)
 - PHASE 4: Shared secret computation and hybrid session key derivation
 """
 
-from dh_kem.kem import dh_keygen, dh_shared_secret
-from pq_kem.kyber_kem import kyber_keygen, kyber_decapsulate
+from primitives.kem.classical import dh_keygen, dh_shared_secret
+from primitives.kem.quantum import kyber_keygen, kyber_decapsulate
 from .hybrid_handshake import server_sign_handshake, hybrid_session_key
 
 
@@ -17,30 +17,37 @@ class Server:
     
     Encapsulates all server-side operations:
     0. Initialize with long-term signing keys (done once, reused across sessions)
-    1. Generate ephemeral keys and sign handshake transcript (PHASE 2)
+       - Both classical (ECDSA) and post-quantum (Dilithium) keys for defense-in-depth
+    1. Generate ephemeral keys and sign handshake transcript with both schemes (PHASE 2)
     2. Compute shared secrets and derive session key (PHASE 4)
     
     Attributes:
-        sk_sign (bytes): Server's long-term ML-DSA-44 private signing key
-                        (secret; never transmitted)
-        session_key (bytes): Derived 32-byte hybrid session key (set after successful handshake)
+        sk_sign_dilithium (bytes): Server's long-term ML-DSA-44 private signing key (secret)
+        sk_sign_ecdsa (bytes): Server's long-term ECDSA private signing key (secret)
+        session_key (bytes): Derived 32-byte hybrid session key (set after handshake)
     """
     
-    def __init__(self, signing_private_key):
-        """Initialize server with long-term signing key.
+    def __init__(self, signing_private_key_dilithium, signing_private_key_ecdsa):
+        """Initialize server with long-term signing keys (both classical and PQ).
         
         Args:
-            signing_private_key (bytes): Server's long-term ML-DSA-44 private key.
-                                        This must be kept secret and used to sign all
-                                        handshake transcripts.
+            signing_private_key_dilithium (bytes): Server's long-term ML-DSA-44 private key.
+                                                  Must be kept secret and used to sign all
+                                                  handshake transcripts (PQ authentication).
+            signing_private_key_ecdsa (bytes): Server's long-term ECDSA private key.
+                                              Must be kept secret and used to sign all
+                                              handshake transcripts (classical authentication).
         
         Raises:
-            ValueError: If key is None or empty
+            ValueError: If either key is None or empty
         """
-        if not signing_private_key:
-            raise ValueError("Signing private key cannot be None or empty")
+        if not signing_private_key_dilithium:
+            raise ValueError("Dilithium signing private key cannot be None or empty")
+        if not signing_private_key_ecdsa:
+            raise ValueError("ECDSA signing private key cannot be None or empty")
         
-        self.sk_sign = signing_private_key
+        self.sk_sign_dilithium = signing_private_key_dilithium
+        self.sk_sign_ecdsa = signing_private_key_ecdsa
         self.session_key = None
         
         # Ephemeral keys (set in phase2)
@@ -50,11 +57,12 @@ class Server:
         self._sk_kyber = None
     
     def phase2_generate_ephemeral_and_sign(self, client_pk_dh, client_pk_kyber):
-        """PHASE 2: Generate ephemeral keys and sign handshake transcript.
+        """PHASE 2: Generate ephemeral keys and sign with BOTH classical and PQ schemes.
         
         Server generates fresh ephemeral keys for this session and creates
-        a signature over all four ephemeral public keys exchanged so far.
-        This signature proves the server's identity and binds all keys together.
+        DUAL signatures (ECDSA + Dilithium) over all four ephemeral public keys.
+        These signatures prove the server's identity through both classical
+        and post-quantum authentication, providing defense-in-depth.
         
         Args:
             client_pk_dh (bytes): Client's ephemeral X25519 public key
@@ -63,18 +71,19 @@ class Server:
                                     (received in PHASE 1)
         
         Returns:
-            tuple: (pk_dh: bytes, pk_kyber: bytes, signature: bytes)
+            tuple: (pk_dh: bytes, pk_kyber: bytes, sig_dilithium: bytes, sig_ecdsa: bytes)
                    Server's ephemeral X25519 public key (32 bytes)
                    Server's ephemeral ML-KEM-512 public key (1184 bytes)
-                   ML-DSA-44 signature over handshake transcript (2420 bytes)
+                   ML-DSA-44 signature over handshake transcript (~2420 bytes)
+                   ECDSA P-256 signature over handshake transcript (~71 bytes)
         
         Security Note:
-            The signature is computed over the canonical handshake transcript:
+            Uses length-prefixing to prevent ambiguity attacks on transcript boundaries:
             transcript = LP(client_pk_dh) || LP(client_pk_kyber) || 
                         LP(server_pk_dh) || LP(server_pk_kyber)
             where LP(x) = len(x) as 4-byte big-endian || x
             
-            This length-prefixing prevents ambiguity attacks on transcript boundaries.
+            BOTH signatures must verify for successful authentication.
         """
         
         # Generate ephemeral X25519 key pair
@@ -83,14 +92,15 @@ class Server:
         # Generate ephemeral Kyber/ML-KEM key pair
         self._pk_kyber, self._sk_kyber = kyber_keygen()
         
-        # Sign the handshake transcript
-        signature = server_sign_handshake(
-            self.sk_sign,
+        # Sign the handshake transcript with BOTH classical and PQ schemes
+        sig_dilithium, sig_ecdsa = server_sign_handshake(
+            self.sk_sign_dilithium,
+            self.sk_sign_ecdsa,
             client_pk_dh, client_pk_kyber,
             self._pk_dh, self._pk_kyber
         )
         
-        return self._pk_dh, self._pk_kyber, signature
+        return self._pk_dh, self._pk_kyber, sig_dilithium, sig_ecdsa
     
     def phase4_derive_session_key(self, client_pk_dh, kyber_ciphertext):
         """PHASE 4: Compute shared secrets and derive hybrid session key.

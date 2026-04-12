@@ -7,53 +7,42 @@ Protocol (3.4) using the structured Client and Server classes.
 This is the recommended way to use the protocol in practice.
 """
 
-from hybrid.client import Client
-from hybrid.server import Server
-from signatures.signatures import generate_keypair
-from classic.hmac import hmac_sha256
+from protocol.client import Client
+from protocol.server import Server
+from primitives.authentication.quantum import generate_keypair as generate_keypair_dilithium
+from primitives.authentication.classical import generate_keypair as generate_keypair_ecdsa
+from primitives.kdf.hmac import hmac_sha256
 
 
 def test_protocol_3_4_with_classes():
     """Test Protocol 3.4 using Client and Server classes (structured approach).
     
-    This test follows the formal protocol specification:
+    This test demonstrates the formal Client-Server Hybrid Authenticated Handshake
+    Protocol (3.4) using the structured Client and Server classes WITH DUAL
+    SIGNATURE AUTHENTICATION (classical ECDSA + post-quantum Dilithium).
     
-    PHASE 0: Setup
-      Server generates long-term signing key pair
-      Client obtains server's public signing key through trusted channel
-    
-    PHASE 1: Client Initialization
-      Client generates ephemeral DH and Kyber keys
-      Client sends ephemeral public keys to server
-    
-    PHASE 2: Server Response
-      Server generates ephemeral DH and Kyber keys
-      Server signs handshake transcript
-      Server sends ephemeral public keys and signature to client
-    
-    PHASE 3: Client Verification
-      Client verifies server's signature using server's long-term public key
-      If verification fails: ABORT handshake
-    
-    PHASE 4: Key Derivation  
-      Both parties compute DH shared secret
-      Both parties compute Kyber shared secret
-      Both parties derive hybrid session key
+    This is the recommended way to use the protocol in practice.
     """
     
     print("=" * 70)
     print("TEST: Protocol 3.4 - Hybrid Authenticated Handshake (Client/Server)")
+    print("      With DUAL SIGNATURES: Classical (ECDSA) + Post-Quantum (Dilithium)")
     print("=" * 70)
     
     # ==========================================================================
     # PHASE 0: Long-term setup (done once, server initialization)
     # ==========================================================================
-    print("\n[PHASE 0] Server Long-Term Key Setup")
+    print("\n[PHASE 0] Server Long-Term Key Setup (DUAL KEYS)")
     print("-" * 70)
     
-    server_signing_public, server_signing_private = generate_keypair()
-    print(f"✓ Server generated long-term signing key pair")
-    print(f"  Public key (distributed via PKI): {server_signing_public[:32].hex()}... (truncated)")
+    # Server generates BOTH classical and post-quantum signing keys
+    server_signing_public_dilithium, server_signing_private_dilithium = generate_keypair_dilithium()
+    server_signing_public_ecdsa, server_signing_private_ecdsa = generate_keypair_ecdsa()
+    
+    print(f"✓ Server generated Dilithium (ML-DSA-44) signing key pair")
+    print(f"  Public key (for PQ auth): {server_signing_public_dilithium[:32].hex()}... (truncated)")
+    print(f"✓ Server generated ECDSA (P-256) signing key pair")
+    print(f"  Public key (for classical auth): {server_signing_public_ecdsa[:50].hex()}... (truncated)")
     
     # ==========================================================================
     # PHASE 1: Client initialization
@@ -61,9 +50,9 @@ def test_protocol_3_4_with_classes():
     print("\n[PHASE 1] Client Ephemeral Key Generation")
     print("-" * 70)
     
-    # Create client with server's public key (obtained through trusted channel)
-    client = Client(server_signing_public)
-    print(f"✓ Client created with server's trusted public key")
+    # Create client with server's BOTH public keys (obtained through trusted channel)
+    client = Client(server_signing_public_dilithium, server_signing_public_ecdsa)
+    print(f"✓ Client created with server's trusted DUAL public keys")
     
     # Client generates ephemeral keys
     client_pk_dh, client_pk_kyber = client.phase1_generate_ephemeral_keys()
@@ -76,36 +65,38 @@ def test_protocol_3_4_with_classes():
     # ==========================================================================
     # PHASE 2: Server response
     # ==========================================================================
-    print("\n[PHASE 2] Server Ephemeral Key Generation & Signing")
+    print("\n[PHASE 2] Server Ephemeral Key Generation & DUAL Signing")
     print("-" * 70)
     
-    # Create server with its long-term signing key
-    server = Server(server_signing_private)
-    print(f"✓ Server initialized with long-term signing key")
+    # Create server with BOTH long-term signing keys
+    server = Server(server_signing_private_dilithium, server_signing_private_ecdsa)
+    print(f"✓ Server initialized with long-term DUAL signing keys")
     
-    # Server responds to client
-    server_pk_dh, server_pk_kyber, signature = server.phase2_generate_ephemeral_and_sign(
+    # Server responds to client and creates DUAL signatures
+    server_pk_dh, server_pk_kyber, signature_dilithium, signature_ecdsa = server.phase2_generate_ephemeral_and_sign(
         client_pk_dh, client_pk_kyber
     )
-    print(f"✓ Server generated ephemeral keys and signed transcript")
+    print(f"✓ Server generated ephemeral keys and signed with BOTH schemes")
     print(f"  Ephemeral DH public: {server_pk_dh.hex()}")
     print(f"  Ephemeral Kyber public: {server_pk_kyber[:32].hex()}... (truncated)")
-    print(f"  Signature: {signature[:32].hex()}... (truncated)")
+    print(f"  Dilithium signature: {signature_dilithium[:32].hex()}... (truncated)")
+    print(f"  ECDSA signature: {signature_ecdsa[:32].hex()}... (truncated)")
     
-    print(f"\n→ Server sends to Client: (pk_dh_s, pk_kyber_s, signature)")
+    print(f"\n→ Server sends to Client: (pk_dh_s, pk_kyber_s, sig_dilithium, sig_ecdsa)")
     
     # ==========================================================================
     # PHASE 3: Client verification
     # ==========================================================================
-    print("\n[PHASE 3] Client Signature Verification")
+    print("\n[PHASE 3] Client DUAL Signature Verification")
     print("-" * 70)
     
     try:
-        # Client verifies signature and derives session key
+        # Client verifies BOTH signatures and derives session key
         client_session_key, kyber_ciphertext = client.phase3_verify_phase4_derive(
-            server_pk_dh, server_pk_kyber, signature
+            server_pk_dh, server_pk_kyber, signature_dilithium, signature_ecdsa
         )
-        print(f"✓ Server signature verified successfully")
+        print(f"✓ Dilithium (post-quantum) signature verified successfully")
+        print(f"✓ ECDSA (classical) signature verified successfully")
         print(f"✓ Client derived session key: {client_session_key.hex()}")
         print(f"≈ Kyber ciphertext for server: {kyber_ciphertext[:32].hex()}... (truncated)")
         
@@ -163,7 +154,7 @@ def test_protocol_3_4_with_classes():
     print("=" * 70)
     print()
     print("Summary:")
-    print(f"- Handshake: AUTHENTICATED (ML-DSA-44 signature verified)")
+    print(f"- Authentication: DUAL SIGNATURES (classical ECDSA + post-quantum Dilithium)")
     print(f"- DH: X25519 (classical, forward-secret)")
     print(f"- PQ-KEM: ML-KEM-512 (post-quantum security)")
     print(f"- Session key: 32 bytes (hybrid DH || Kyber)")
@@ -177,49 +168,52 @@ def test_protocol_3_4_mitm_detection():
     """Test that Protocol 3.4 detects MITM attacks (signature verification fails).
     
     Simulates an attacker intercepting the handshake and substituting
-    their own ephemeral keys. The signature verification should fail.
+    their own ephemeral keys. BOTH signature schemes (classical + PQ)
+    must fail if the attacker uses different keys.
     """
     
     print("\n" + "=" * 70)
-    print("TEST: Protocol 3.4 - MITM Attack Detection")
+    print("TEST: Protocol 3.4 - MITM Attack Detection (DUAL SIGNATURES)")
     print("=" * 70)
     
-    # Setup legitimate server
-    server_signing_public, server_signing_private = generate_keypair()
-    server = Server(server_signing_private)
+    # Setup legitimate server with DUAL keys
+    server_signing_public_dilithium, server_signing_private_dilithium = generate_keypair_dilithium()
+    server_signing_public_ecdsa, server_signing_private_ecdsa = generate_keypair_ecdsa()
+    server = Server(server_signing_private_dilithium, server_signing_private_ecdsa)
     
-    # Attacker's keys
-    attacker_signing_public, attacker_signing_private = generate_keypair()
-    attacker_server = Server(attacker_signing_private)
+    # Attacker's DUAL keys
+    attacker_signing_public_dilithium, attacker_signing_private_dilithium = generate_keypair_dilithium()
+    attacker_signing_public_ecdsa, attacker_signing_private_ecdsa = generate_keypair_ecdsa()
+    attacker_server = Server(attacker_signing_private_dilithium, attacker_signing_private_ecdsa)
     
     # Client (who doesn't know about the attacker)
-    client = Client(server_signing_public)  # Uses legitimate server's key
+    client = Client(server_signing_public_dilithium, server_signing_public_ecdsa)  # Uses legitimate server's keys
     
     print("\n[PHASE 1] Client generates and sends ephemeral keys")
     client_pk_dh, client_pk_kyber = client.phase1_generate_ephemeral_keys()
     print(f"CLIENT → SERVER: (pk_dh_c, pk_kyber_c)")
     
     print("\n[PHASE 2] ATTACKER intercepts and substitutes own ephemeral keys")
-    # Attacker responds on behalf of server
-    attacker_pk_dh, attacker_pk_kyber, attacker_sig = attacker_server.phase2_generate_ephemeral_and_sign(
+    # Attacker responds on behalf of server with DUAL signatures
+    attacker_pk_dh, attacker_pk_kyber, attacker_sig_dilithium, attacker_sig_ecdsa = attacker_server.phase2_generate_ephemeral_and_sign(
         client_pk_dh, client_pk_kyber
     )
-    print(f"ATTACKER → CLIENT: (pk_dh_attacker, pk_kyber_attacker, sig_attacker)")
+    print(f"ATTACKER → CLIENT: (pk_dh_attacker, pk_kyber_attacker, sig_dilithium_attacker, sig_ecdsa_attacker)")
     
-    print("\n[PHASE 3] Client verifies signature")
+    print("\n[PHASE 3] Client verifies DUAL signatures")
     try:
-        # Client tries to verify attacker's signature with legitimate server's key
-        # This SHOULD fail because attacker's signature is signed with attacker's key
+        # Client tries to verify attacker's signatures with legitimate server's keys
+        # This SHOULD fail because attacker's signatures are signed with attacker's keys
         client_session_key, kyber_ct = client.phase3_verify_phase4_derive(
-            attacker_pk_dh, attacker_pk_kyber, attacker_sig
+            attacker_pk_dh, attacker_pk_kyber, attacker_sig_dilithium, attacker_sig_ecdsa
         )
-        print(f"✗ SECURITY FAILURE: Signature should have failed but didn't!")
+        print(f"✗ SECURITY FAILURE: BOTH signatures should have failed but didn't!")
         return False
         
     except Exception as e:
-        print(f"✓ Signature verification FAILED (as expected)")
+        print(f"✓ DUAL signature verification FAILED (as expected)")
         print(f"  Reason: {e}")
-        print(f"  Handshake aborted - MITM attack detected!")
+        print(f"  Handshake aborted - MITM attack detected by BOTH authentication schemes!")
         return True
 
 

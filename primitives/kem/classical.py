@@ -1,5 +1,5 @@
 import secrets
-from classic.hkdf import hkdf_extract, hkdf_expand
+from primitives.kdf.hkdf import hkdf_extract, hkdf_expand
 
 def int_to_bytes(x):
     length = (x.bit_length() + 7) // 8

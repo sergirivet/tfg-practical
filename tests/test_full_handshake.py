@@ -11,8 +11,8 @@ Note: This demonstrates the classical DH component. For authenticated
 handshake with post-quantum signatures, see test_authenticated_handshake.py
 """
 
-from dh_kem.kem import kem_keygen, kem_encapsulate, kem_decapsulate
-from classic.hmac import hmac_sha256
+from primitives.kem.classical import kem_keygen, kem_encapsulate, kem_decapsulate
+from primitives.kdf.hmac import hmac_sha256
 
 # Legacy test parameters (kept for backward compatibility)
 P_DEMO = 0xFFFFFFFB
