@@ -1,0 +1,41 @@
+Scenario,Warm_Latency_Mean_ms,Warm_Latency_Stdev_ms,Cold_Start_ms,KeyGen_ms,Encapsulation_ms,Verification_ms,Total_Payload_Bytes,Requires_Fragmentation,Number_of_IP_Packets
+Classical,3.778,0.089,6.452,1.764,0.055,1.959,314,False,1
+Post-Quantum,38.562,15.654,23.573,2.948,25.564,10.050,6100,True,5
+Hybrid KEM-Only,11.894,0.134,11.949,4.785,0.063,7.046,2680,True,2
+Full Hybrid,41.422,17.749,44.033,4.804,24.464,12.155,6413,True,5
+
+Component Breakdown
+
+Classical
+,ECDSA_PK,178
+,X25519_PK_Client,32
+,X25519_PK_Server,32
+,ECDSA_Signature,72
+
+Post-Quantum
+,Dilithium_PK,1312
+,Kyber_PK_Client,800
+,Kyber_PK_Server,800
+,Kyber_Ciphertext,768
+,Dilithium_Signature,2420
+
+Hybrid KEM-Only
+,ECDSA_PK,178
+,X25519_PK_Client,32
+,Kyber_PK_Client,800
+,X25519_PK_Server,32
+,Kyber_PK_Server,800
+,Kyber_Ciphertext,768
+,ECDSA_Signature,70
+
+Full Hybrid
+,ECDSA_PK,178
+,Dilithium_PK,1312
+,X25519_PK_Client,32
+,Kyber_PK_Client,800
+,X25519_PK_Server,32
+,Kyber_PK_Server,800
+,Kyber_Ciphertext,768
+,ECDSA_Signature,71
+,Dilithium_Signature,2420
+
