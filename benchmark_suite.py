@@ -283,7 +283,6 @@ def scenario_post_quantum() -> Tuple[LatencyMetrics, PayloadMetrics, Dict, Compo
         start_keygen = time.perf_counter()
         
         client_pk_kyber, client_sk_kyber = kyber_keygen()
-        server_pk_kyber, server_sk_kyber = kyber_keygen()
         
         end_keygen = time.perf_counter()
         keygen_ms = (end_keygen - start_keygen) * 1000
@@ -291,7 +290,8 @@ def scenario_post_quantum() -> Tuple[LatencyMetrics, PayloadMetrics, Dict, Compo
         # ===== ENCAPSULATION/SIGNING (Server) =====
         start_encap = time.perf_counter()
         
-        transcript = client_pk_kyber + server_pk_kyber
+        ct_kyber_client, ss_server = kyber_encapsulate(client_pk_kyber)
+        transcript = client_pk_kyber + ct_kyber_client
         sig_dilithium = dilithium_sign(dilithium_sk, transcript)
         
         end_encap = time.perf_counter()
@@ -300,19 +300,19 @@ def scenario_post_quantum() -> Tuple[LatencyMetrics, PayloadMetrics, Dict, Compo
         # ===== VERIFICATION/DECAPSULATION (Client) =====
         start_verif = time.perf_counter()
         
-        ct_kyber_client, ss_client = kyber_encapsulate(server_pk_kyber)
+        ss_client = kyber_decapsulate(ct_kyber_client, client_sk_kyber)
         dilithium_verify(dilithium_pk, transcript, sig_dilithium)
         
         end_verif = time.perf_counter()
         verif_ms = (end_verif - start_verif) * 1000
         
-        # Server side
-        ss_server = kyber_decapsulate(ct_kyber_client, server_sk_kyber)
+        # Sanity check: both sides should derive the same Kyber secret
+        if ss_client != ss_server:
+            raise AssertionError("Kyber shared secrets do not match")
         
         result_dict = {
             'dilithium_pk': dilithium_pk,
             'client_pk_kyber': client_pk_kyber,
-            'server_pk_kyber': server_pk_kyber,
             'ct_kyber_client': ct_kyber_client,
             'sig_dilithium': sig_dilithium,
         }
@@ -333,7 +333,6 @@ def scenario_post_quantum() -> Tuple[LatencyMetrics, PayloadMetrics, Dict, Compo
     components = {
         'Dilithium_PK': len(result['dilithium_pk']),
         'Kyber_PK_Client': len(result['client_pk_kyber']),
-        'Kyber_PK_Server': len(result['server_pk_kyber']),
         'Kyber_Ciphertext': len(result['ct_kyber_client']),
         'Dilithium_Signature': len(result['sig_dilithium']),
     }
@@ -362,7 +361,6 @@ def scenario_hybrid_kem_only() -> Tuple[LatencyMetrics, PayloadMetrics, Dict, Co
         client_pk_kyber, client_sk_kyber = kyber_keygen()
         
         server_sk_dh, server_pk_dh = dh_keygen()
-        server_pk_kyber, server_sk_kyber = kyber_keygen()
         
         end_keygen = time.perf_counter()
         keygen_ms = (end_keygen - start_keygen) * 1000
@@ -370,7 +368,8 @@ def scenario_hybrid_kem_only() -> Tuple[LatencyMetrics, PayloadMetrics, Dict, Co
         # ===== ENCAPSULATION/SIGNING (Server) =====
         start_encap = time.perf_counter()
         
-        transcript = client_pk_dh + client_pk_kyber + server_pk_dh + server_pk_kyber
+        ct_kyber, ss_kyber_server = kyber_encapsulate(client_pk_kyber)
+        transcript = client_pk_dh + client_pk_kyber + server_pk_dh + ct_kyber
         sig_ecdsa = ecdsa_sign(ecdsa_sk, transcript)
         
         end_encap = time.perf_counter()
@@ -380,7 +379,7 @@ def scenario_hybrid_kem_only() -> Tuple[LatencyMetrics, PayloadMetrics, Dict, Co
         start_verif = time.perf_counter()
         
         ss_dh_client = dh_shared_secret(client_sk_dh, server_pk_dh)
-        ct_kyber, ss_kyber_client = kyber_encapsulate(server_pk_kyber)
+        ss_kyber_client = kyber_decapsulate(ct_kyber, client_sk_kyber)
         ecdsa_verify(ecdsa_pk, transcript, sig_ecdsa)
         
         end_verif = time.perf_counter()
@@ -388,14 +387,14 @@ def scenario_hybrid_kem_only() -> Tuple[LatencyMetrics, PayloadMetrics, Dict, Co
         
         # Server side
         ss_dh_server = dh_shared_secret(server_sk_dh, client_pk_dh)
-        ss_kyber_server = kyber_decapsulate(ct_kyber, server_sk_kyber)
+        if ss_kyber_client != ss_kyber_server:
+            raise AssertionError("Kyber shared secrets do not match")
         
         result_dict = {
             'ecdsa_pk': ecdsa_pk,
             'client_pk_dh': client_pk_dh,
             'client_pk_kyber': client_pk_kyber,
             'server_pk_dh': server_pk_dh,
-            'server_pk_kyber': server_pk_kyber,
             'ct_kyber': ct_kyber,
             'sig_ecdsa': sig_ecdsa,
         }
@@ -418,7 +417,6 @@ def scenario_hybrid_kem_only() -> Tuple[LatencyMetrics, PayloadMetrics, Dict, Co
         'X25519_PK_Client': len(result['client_pk_dh']),
         'Kyber_PK_Client': len(result['client_pk_kyber']),
         'X25519_PK_Server': len(result['server_pk_dh']),
-        'Kyber_PK_Server': len(result['server_pk_kyber']),
         'Kyber_Ciphertext': len(result['ct_kyber']),
         'ECDSA_Signature': len(result['sig_ecdsa']),
     }
@@ -448,7 +446,6 @@ def scenario_full_hybrid() -> Tuple[LatencyMetrics, PayloadMetrics, Dict, Compon
         client_pk_kyber, client_sk_kyber = kyber_keygen()
         
         server_sk_dh, server_pk_dh = dh_keygen()
-        server_pk_kyber, server_sk_kyber = kyber_keygen()
         
         end_keygen = time.perf_counter()
         keygen_ms = (end_keygen - start_keygen) * 1000
@@ -456,7 +453,8 @@ def scenario_full_hybrid() -> Tuple[LatencyMetrics, PayloadMetrics, Dict, Compon
         # ===== ENCAPSULATION/SIGNING (Server) =====
         start_encap = time.perf_counter()
         
-        transcript = client_pk_dh + client_pk_kyber + server_pk_dh + server_pk_kyber
+        ct_kyber, ss_kyber_server = kyber_encapsulate(client_pk_kyber)
+        transcript = client_pk_dh + client_pk_kyber + server_pk_dh + ct_kyber
         sig_ecdsa = ecdsa_sign(ecdsa_sk, transcript)
         sig_dilithium = dilithium_sign(dilithium_sk, transcript)
         
@@ -467,7 +465,7 @@ def scenario_full_hybrid() -> Tuple[LatencyMetrics, PayloadMetrics, Dict, Compon
         start_verif = time.perf_counter()
         
         ss_dh_client = dh_shared_secret(client_sk_dh, server_pk_dh)
-        ct_kyber, ss_kyber_client = kyber_encapsulate(server_pk_kyber)
+        ss_kyber_client = kyber_decapsulate(ct_kyber, client_sk_kyber)
         ecdsa_verify(ecdsa_pk, transcript, sig_ecdsa)
         dilithium_verify(dilithium_pk, transcript, sig_dilithium)
         
@@ -476,7 +474,8 @@ def scenario_full_hybrid() -> Tuple[LatencyMetrics, PayloadMetrics, Dict, Compon
         
         # Server side
         ss_dh_server = dh_shared_secret(server_sk_dh, client_pk_dh)
-        ss_kyber_server = kyber_decapsulate(ct_kyber, server_sk_kyber)
+        if ss_kyber_client != ss_kyber_server:
+            raise AssertionError("Kyber shared secrets do not match")
         
         result_dict = {
             'ecdsa_pk': ecdsa_pk,
@@ -484,7 +483,6 @@ def scenario_full_hybrid() -> Tuple[LatencyMetrics, PayloadMetrics, Dict, Compon
             'client_pk_dh': client_pk_dh,
             'client_pk_kyber': client_pk_kyber,
             'server_pk_dh': server_pk_dh,
-            'server_pk_kyber': server_pk_kyber,
             'ct_kyber': ct_kyber,
             'sig_ecdsa': sig_ecdsa,
             'sig_dilithium': sig_dilithium,
@@ -509,7 +507,6 @@ def scenario_full_hybrid() -> Tuple[LatencyMetrics, PayloadMetrics, Dict, Compon
         'X25519_PK_Client': len(result['client_pk_dh']),
         'Kyber_PK_Client': len(result['client_pk_kyber']),
         'X25519_PK_Server': len(result['server_pk_dh']),
-        'Kyber_PK_Server': len(result['server_pk_kyber']),
         'Kyber_Ciphertext': len(result['ct_kyber']),
         'ECDSA_Signature': len(result['sig_ecdsa']),
         'Dilithium_Signature': len(result['sig_dilithium']),

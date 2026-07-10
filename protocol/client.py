@@ -8,7 +8,8 @@ This module provides the Client class which encapsulates:
 """
 
 from primitives.kem.classical import dh_keygen, dh_shared_secret
-from primitives.kem.quantum import kyber_keygen, kyber_encapsulate
+from primitives.kem.quantum import kyber_keygen, kyber_decapsulate
+from .record_layer import RecordSession, RecordClosedError
 from .hybrid_handshake import client_verify_handshake, hybrid_session_key, AuthenticationError
 
 
@@ -54,6 +55,7 @@ class Client:
         self.server_trust_key_dilithium = server_signing_public_key_dilithium
         self.server_trust_key_ecdsa = server_signing_public_key_ecdsa
         self.session_key = None
+        self.record_session = None
         
         # Ephemeral keys (set in phase1)
         self._sk_dh = None
@@ -84,7 +86,7 @@ class Client:
         
         return self._pk_dh, self._pk_kyber
     
-    def phase3_verify_phase4_derive(self, server_pk_dh, server_pk_kyber, 
+    def phase3_verify_phase4_derive(self, server_pk_dh, server_kyber_ciphertext, 
                                     server_signature_dilithium, server_signature_ecdsa):
         """PHASE 3-4: Verify DUAL signatures and derive session key.
         
@@ -97,14 +99,12 @@ class Client:
         
         Args:
             server_pk_dh (bytes): Server's ephemeral X25519 public key
-            server_pk_kyber (bytes): Server's ephemeral ML-KEM-512 public key
+            server_kyber_ciphertext (bytes): Kyber ciphertext received from server
             server_signature_dilithium (bytes): ML-DSA-44 signature over handshake transcript
             server_signature_ecdsa (bytes): ECDSA P-256 signature over handshake transcript
         
         Returns:
-            tuple: (session_key: bytes, kyber_ciphertext: bytes)
-                   32-byte hybrid session key
-                   1088-byte Kyber ciphertext (needed by server to decapsulate)
+            bytes: 32-byte hybrid session key
         
         Raises:
             AuthenticationError: If either signature verification fails
@@ -124,7 +124,7 @@ class Client:
             self.server_trust_key_dilithium,
             self.server_trust_key_ecdsa,
             self._pk_dh, self._pk_kyber,
-            server_pk_dh, server_pk_kyber,
+            server_pk_dh, server_kyber_ciphertext,
             server_signature_dilithium, server_signature_ecdsa
         )
         
@@ -133,14 +133,35 @@ class Client:
         # DH shared secret: client's ephemeral private × server's ephemeral public
         ss_dh = dh_shared_secret(self._sk_dh, server_pk_dh)
         
-        # Kyber shared secret: encapsulate to server's ephemeral public key
-        kyber_ct, ss_kyber = kyber_encapsulate(server_pk_kyber)
+        # Kyber shared secret: decapsulate the server's ciphertext using the client's private key
+        ss_kyber = kyber_decapsulate(server_kyber_ciphertext, self._sk_kyber)
         
         # Derive hybrid session key by combining both secrets
         self.session_key = hybrid_session_key(ss_dh, ss_kyber)
+        self.record_session = RecordSession(master_secret=self.session_key, is_server=False)
         
-        # Return session key and Kyber ciphertext (needed by server)
-        return self.session_key, kyber_ct
+        return self.session_key
+
+    def send_application_data(self, plaintext: bytes) -> bytes:
+        """Seal application data for the peer using the active record session."""
+        if self.record_session is None:
+            raise RuntimeError("Record session is not available; handshake has not completed")
+
+        return self.record_session.seal_record(0x17, plaintext)
+
+    def receive_application_data(self, record_frame: bytes) -> bytes:
+        """Open an incoming application record and return plaintext bytes."""
+        if self.record_session is None:
+            raise RuntimeError("Record session is not available; handshake has not completed")
+
+        return self.record_session.open_record(record_frame)
+
+    def close_session(self) -> bytes:
+        """Create an encrypted close_notify alert for clean shutdown."""
+        if self.record_session is None:
+            raise RuntimeError("Record session is not available; handshake has not completed")
+
+        return self.record_session.seal_record(0x15, b"\x01\x00")
     
     def get_session_key(self):
         """Get the derived session key.

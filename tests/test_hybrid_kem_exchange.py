@@ -58,8 +58,7 @@ def test_hybrid_handshake():
     if final_client_key == final_server_key:
         print("✓ Hybrid session keys match")
     else:
-        print("✗ Hybrid session keys do not match")
-        return False
+        raise AssertionError("Hybrid session keys do not match")
 
     # Post-handshake HMAC authentication
     print("\n--- HMAC Authentication (Post-Handshake) ---")
@@ -70,13 +69,14 @@ def test_hybrid_handshake():
     if valid:
         print("✓ Hybrid HMAC verified")
     else:
-        print("✗ Hybrid HMAC verification failed")
-        return False
+        raise AssertionError("Hybrid HMAC verification failed")
     
     print("\n" + "=" * 60)
     print("HYBRID HANDSHAKE TEST PASSED!")
     print("=" * 60)
-    return True
+
+    assert final_client_key == final_server_key
+    assert valid is True
 
 
 if __name__ == "__main__":

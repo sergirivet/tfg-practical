@@ -8,6 +8,7 @@ Este proyecto implementa un protocolo de handshake autenticado que combina:
 - **Criptografía clásica**: X25519 (Diffie-Hellman de curvas elípticas) + ECDSA (P-256)
 - **Criptografía post-cuántica**: ML-KEM-512 (Kyber) + ML-DSA-44 (Dilithium)
 - **Híbrido seguro**: Protocolo 3.4 con DUAL AUTENTICACIÓN (clásica + post-cuántica)
+- **Capa de datos segura**: Record Layer con AES-256-GCM y `RecordSession`
 
 El objetivo es validar un enfoque defensivo en profundidad (defense-in-depth) contra amenazas cuánticas:
 - Si una familia de firmas se ve comprometida, la otra sigue proporcionando seguridad
@@ -24,6 +25,8 @@ El objetivo es validar un enfoque defensivo en profundidad (defense-in-depth) co
   - Firma 2: ML-DSA-44 Dilithium (autenticación post-cuántica)
 - Derivación segura de claves (HKDF-SHA256)
 - Protección de integridad de mensajes (HMAC-SHA256)
+- Record Layer autenticada para datos de aplicación con AES-256-GCM
+- Demo live sobre sockets reales con `demo_live.py`
 
 **Criptografía estándar**:
 - X25519: RFC 7748 (Montgomery ladder)
@@ -37,6 +40,7 @@ El objetivo es validar un enfoque defensivo en profundidad (defense-in-depth) co
 - Handshake completo clásico
 - Handshake híbrido sin autenticación
 - Handshake autenticado DUAL-SIGNATURE (Protocolo 3.4)
+- Integración de Record Layer y transmisión segura de datos
 - Pruebas de detección de MITM con ambos esquemas
 - Validación de firmas individuales y híbridas
 
@@ -63,6 +67,7 @@ tfg-practical/
 │   ├── __init__.py
 │   ├── hybrid_handshake.py            # Lógica del protocolo (dual signatures)
 │   ├── client.py                      # Implementación cliente
+│   ├── record_layer.py                # Capa de datos segura (AES-256-GCM)
 │   └── server.py                      # Implementación servidor
 │
 ├── tests/                             # Suite completa de pruebas
@@ -73,6 +78,7 @@ tfg-practical/
 │
 ├── benchmark_suite.py                 # Suite de benchmarking de rendimiento
 ├── benchmarks_results.csv             # Resultados de mediciones
+├── demo_live.py                       # Demo live sobre socket real (localhost)
 ├── README.md                          # Este archivo
 └── requirements.txt                   # Dependencias del proyecto
 ```
@@ -106,45 +112,6 @@ PHASE 4: Key Derivation
   - Kyber shared secret: ML-KEM-512 (efímero)  
   - Hybrid session key: HKDF(DH secret || Kyber secret)
 
-POST-HANDSHAKE: Message Protection
-  - HMAC-SHA256: integridad de messages (ya no se usan firmas)
-```
-
-## Requisitos
-
-- Python 3.8+
-- Dependencias criptográficas:
-  ```
-  cryptography>=41.0.0  # Para X25519 y HKDF
-  ml-kem>=0.2.0         # Para ML-KEM-512 (Kyber)
-  ml-dsa>=0.2.0         # Para ML-DSA-44 (Dilithium)
-  ```
-
-## Instalación
-
-```bash
-# Clonar repositorio
-git clone <repository-url>
-cd tfg-practical
-
-# Crear ambiente virtual (recomendado)
-python3 -m venv .venv
-source .venv/bin/activate  # En macOS/Linux
-# source .venv/Scripts/activate  # En Windows
-
-# Instalar dependencias
-pip install -r requirements.txt
-```
-
-## Uso
-
-### 1. Handshake Clásico Simple
-
-```python
-from primitives.kem.classical import dh_keygen, dh_shared_secret
-from primitives.kdf.hkdf import hkdf_extract, hkdf_expand
-
-# Generar claves efímeras
 sk_a, pk_a = dh_keygen()
 sk_b, pk_b = dh_keygen()
 
@@ -162,24 +129,156 @@ print(f"Session key: {session_key.hex()}")
 ```python
 from protocol.client import Client
 from protocol.server import Server
-from primitives.authentication.quantum import generate_keypair
+from primitives.authentication.classical import generate_keypair as generate_ecdsa_keypair
+from primitives.authentication.quantum import generate_keypair as generate_dilithium_keypair
 
-# PHASE 0: Servidor genera claves de firma a largo plazo (ECDSA + Dilithium)
-sk_dilithium, pk_dilithium = generate_keypair()
-server = Server(sk_dilithium)
-client = Client(pk_dilithium)
+# Fase 0: el servidor crea sus claves de firma a largo plazo
+server_signing_public_dilithium, server_signing_private_dilithium = generate_dilithium_keypair()
+server_signing_public_ecdsa, server_signing_private_ecdsa = generate_ecdsa_keypair()
 
-# PHASE 1: Cliente genera claves efímeras híbridas
-client.phase1()
+client = Client(server_signing_public_dilithium, server_signing_public_ecdsa)
+server = Server(server_signing_private_dilithium, server_signing_private_ecdsa)
 
-# PHASE 2: Servidor responde y FIRMA el transcript con AMBOS esquemas
-server_response = server.phase2(client._pk_dh, client._pk_kyber)
+# Fase 1: el cliente genera sus claves efímeras híbridas
+client_pk_dh, client_pk_kyber = client.phase1_generate_ephemeral_keys()
 
-# PHASE 3: Cliente VERIFICA AMBAS firmas (ECDSA + Dilithium)
+# Fase 2: el servidor encapsula hacia la clave pública Kyber del cliente y firma el transcript
+server_pk_dh, server_kyber_ciphertext, sig_dilithium, sig_ecdsa = server.phase2_generate_ephemeral_and_sign(
+  client_pk_dh,
+  client_pk_kyber,
+)
+
+# Fase 3: el cliente verifica ambas firmas antes de usar cualquier secreto derivado
+client_session_key = client.phase3_verify_phase4_derive(
+  server_pk_dh,
+  server_kyber_ciphertext,
+  sig_dilithium,
+  sig_ecdsa,
+)
+
+# Fase 4: el servidor completa la misma derivación de sesión
+server_session_key = server.phase4_derive_session_key(client_pk_dh)
+
+assert client_session_key == server_session_key
+print(f"Master secret established: {client_session_key.hex()}")
+```
+
+### 3. Transmisión Segura de Datos (Record Protocol)
+
+```python
+import socket
+
+from protocol.client import Client
+from protocol.server import Server
+from primitives.authentication.classical import generate_keypair as generate_ecdsa_keypair
+from primitives.authentication.quantum import generate_keypair as generate_dilithium_keypair
+
+def recv_frame(sock):
+  # La cabecera fija del record incluye type, version y length.
+  header = sock.recv(5)
+  if len(header) != 5:
+    raise RuntimeError("Truncated record header")
+
+  payload_length = int.from_bytes(header[3:5], "big")
+  payload = b""
+  while len(payload) < payload_length:
+    chunk = sock.recv(payload_length - len(payload))
+    if not chunk:
+      raise RuntimeError("Truncated record payload")
+    payload += chunk
+
+  return header + payload
+
+# Handshake previo completo
+server_signing_public_dilithium, server_signing_private_dilithium = generate_dilithium_keypair()
+server_signing_public_ecdsa, server_signing_private_ecdsa = generate_ecdsa_keypair()
+client = Client(server_signing_public_dilithium, server_signing_public_ecdsa)
+server = Server(server_signing_private_dilithium, server_signing_private_ecdsa)
+
+client_pk_dh, client_pk_kyber = client.phase1_generate_ephemeral_keys()
+server_pk_dh, server_kyber_ciphertext, sig_dilithium, sig_ecdsa = server.phase2_generate_ephemeral_and_sign(
+  client_pk_dh,
+  client_pk_kyber,
+)
+client_master_secret = client.phase3_verify_phase4_derive(
+  server_pk_dh,
+  server_kyber_ciphertext,
+  sig_dilithium,
+  sig_ecdsa,
+)
+server_master_secret = server.phase4_derive_session_key(client_pk_dh)
+
+assert client_master_secret == server_master_secret
+
+# En la fase de datos ya no participan firmas: AES-256-GCM protege cada record
+# y el AAD incluye el header más el sequence_number implícito para bloquear replay.
+
+# Socket simulado para transporte dúplex
+client_sock, server_sock = socket.socketpair()
+
+# Cliente -> Servidor
+client_frame = client.send_application_data(b"GET /v1/account/balance")
+client_sock.sendall(client_frame)
+server_incoming = recv_frame(server_sock)
+server_plaintext = server.receive_application_data(server_incoming)
+print(server_plaintext.decode())
+
+# Servidor -> Cliente
+server_frame = server.send_application_data(b"HTTP/1.1 200 OK")
+server_sock.sendall(server_frame)
+client_incoming = recv_frame(client_sock)
+client_plaintext = client.receive_application_data(client_incoming)
+print(client_plaintext.decode())
+
+# Cierre limpio autenticado con close_notify
+close_frame = client.close_session()
+client_sock.sendall(close_frame)
+close_record = recv_frame(server_sock)
+server.receive_application_data(close_record)
+print("close_notify recibido y autenticado")
+```
+
+### 4. Demo Live sobre Socket Real
+
+```bash
+# Ejecutar la demostración end-to-end sobre 127.0.0.1:8080
+python demo_live.py
+```
+
+La demo levanta un servidor y un cliente en threads, completa el handshake híbrido, transmite un mensaje de aplicación cifrado con AES-256-GCM y finaliza con `close_notify` autenticado.
+
+### 5. Ejecución de Tests
+
+```bash
+# Ejecutar todos los tests
+pytest tests/
+
+# Ejecutar un test específico
+pytest tests/test_complete_hybrid_authenticated_handshake.py -v
+
+# Ejecutar con cobertura
+pytest tests/ --cov=. --cov-report=html
+```
+
+### 6. Suite de Benchmarking
+
+Ejecutar análisis de rendimiento y payload de red:
+
+```bash
+# Ejecutar benchmarks completos (genera gráficos y CSV)
+python benchmark_suite.py
+
+# Salida esperada:
+#  - Tabla Markdown con comparativas
+#  - benchmarks_results.csv con datos detallados
+#  - Gráficos de latencia y payload
+#  - Análisis de fragmentación de packets
+```
 client.phase3(server_response[0], server_response[1], server_response[2])
+# Fase 4: el servidor completa la misma derivación de sesión
 
 # PHASE 4: Ambos derivan la clave de sesión híbrida
-server.phase4(client._pk_dh, client._pk_kyber, server_response[3])
+server.phase4(client._pk_dh)
 
 print(f"Client session key: {client.session_key.hex()}")
 print(f"Server session key: {server.session_key.hex()}")
@@ -233,18 +332,17 @@ Cliente → Servidor: pk_dh || pk_kyber
 ### Fase 2: Respuesta del Servidor
 ```
 sk_dh', pk_dh' ← X25519.KeyGen()
-sk_kyber', pk_kyber' ← ML-KEM-512.KeyGen()
 (ss_kyber, ct_kyber) ← ML-KEM-512.Encaps(pk_kyber)
 
-transcript = pk_dh || pk_kyber || pk_dh' || pk_kyber' || ct_kyber
+transcript = pk_dh || pk_kyber || pk_dh' || ct_kyber
 sig ← ML-DSA-44.Sign(sk_sign, transcript)
 
-Servidor → Cliente: pk_dh' || pk_kyber' || ct_kyber || sig
+Servidor → Cliente: pk_dh' || ct_kyber || sig
 ```
 
 ### Fase 3: Verificación del Cliente
 ```
-transcript = pk_dh || pk_kyber || pk_dh' || pk_kyber' || ct_kyber
+transcript = pk_dh || pk_kyber || pk_dh' || ct_kyber
 ML-DSA-44.Verify(pk_sign, transcript, sig)  // Si falla: abort
 ```
 
@@ -397,4 +495,4 @@ Sergi
 
 ---
 
-**Última actualización**: 13 Mayo 2026
+**Última actualización**: 10 Julio 2026

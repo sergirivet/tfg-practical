@@ -103,14 +103,15 @@ def verify(public_key, message, signature):
 # Helper Function for Handshake Transcript Construction
 # ============================================================================
 
-def build_handshake_transcript(client_dh_pub, client_kyber_pub, server_dh_pub, server_kyber_pub):
+def build_handshake_transcript(client_dh_pub, client_kyber_pub, server_dh_pub, server_kyber_ct):
     """
     Construct the handshake transcript for signing/verification.
     
     Cryptographic Purpose:
-        The transcript is a canonical byte representation of all ephemeral
-        public keys exchanged during the handshake. By signing this transcript,
-        the server cryptographically binds all keys together, ensuring that:
+        The transcript is a canonical byte representation of the client's
+        ephemeral public keys, the server's DH public key, and the server's
+        Kyber ciphertext. By signing this transcript, the server cryptographically
+        binds all handshake material together, ensuring that:
         1. The keys were chosen by the legitimate server
         2. The keys have not been modified in transit
         3. The keys belong to this specific handshake session
@@ -119,7 +120,7 @@ def build_handshake_transcript(client_dh_pub, client_kyber_pub, server_dh_pub, s
         client_dh_pub (bytes): Client's ephemeral DH public key
         client_kyber_pub (bytes): Client's ephemeral Kyber public key  
         server_dh_pub (bytes): Server's ephemeral DH public key
-        server_kyber_pub (bytes): Server's ephemeral Kyber public key
+        server_kyber_ct (bytes): Server's Kyber ciphertext for the client
     
     Returns:
         bytes: Concatenated transcript ready for signing
@@ -138,7 +139,7 @@ def build_handshake_transcript(client_dh_pub, client_kyber_pub, server_dh_pub, s
         length_prefix(client_dh_pub) +
         length_prefix(client_kyber_pub) +
         length_prefix(server_dh_pub) +
-        length_prefix(server_kyber_pub)
+        length_prefix(server_kyber_ct)
     )
     
     return transcript

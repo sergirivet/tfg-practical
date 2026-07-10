@@ -7,6 +7,8 @@ Protocol (3.4) using the structured Client and Server classes.
 This is the recommended way to use the protocol in practice.
 """
 
+import pytest
+
 from protocol.client import Client
 from protocol.server import Server
 from primitives.authentication.quantum import generate_keypair as generate_keypair_dilithium
@@ -72,17 +74,17 @@ def test_protocol_3_4_with_classes():
     server = Server(server_signing_private_dilithium, server_signing_private_ecdsa)
     print(f"✓ Server initialized with long-term DUAL signing keys")
     
-    # Server responds to client and creates DUAL signatures
-    server_pk_dh, server_pk_kyber, signature_dilithium, signature_ecdsa = server.phase2_generate_ephemeral_and_sign(
+    # Server responds to client with a ciphertext and creates DUAL signatures
+    server_pk_dh, server_kyber_ciphertext, signature_dilithium, signature_ecdsa = server.phase2_generate_ephemeral_and_sign(
         client_pk_dh, client_pk_kyber
     )
-    print(f"✓ Server generated ephemeral keys and signed with BOTH schemes")
+    print(f"✓ Server generated DH key, encapsulated Kyber secret, and signed with BOTH schemes")
     print(f"  Ephemeral DH public: {server_pk_dh.hex()}")
-    print(f"  Ephemeral Kyber public: {server_pk_kyber[:32].hex()}... (truncated)")
+    print(f"  Kyber ciphertext: {server_kyber_ciphertext[:32].hex()}... (truncated)")
     print(f"  Dilithium signature: {signature_dilithium[:32].hex()}... (truncated)")
     print(f"  ECDSA signature: {signature_ecdsa[:32].hex()}... (truncated)")
     
-    print(f"\n→ Server sends to Client: (pk_dh_s, pk_kyber_s, sig_dilithium, sig_ecdsa)")
+    print(f"\n→ Server sends to Client: (pk_dh_s, kyber_ciphertext, sig_dilithium, sig_ecdsa)")
     
     # ==========================================================================
     # PHASE 3: Client verification
@@ -92,20 +94,15 @@ def test_protocol_3_4_with_classes():
     
     try:
         # Client verifies BOTH signatures and derives session key
-        client_session_key, kyber_ciphertext = client.phase3_verify_phase4_derive(
-            server_pk_dh, server_pk_kyber, signature_dilithium, signature_ecdsa
+        client_session_key = client.phase3_verify_phase4_derive(
+            server_pk_dh, server_kyber_ciphertext, signature_dilithium, signature_ecdsa
         )
         print(f"✓ Dilithium (post-quantum) signature verified successfully")
         print(f"✓ ECDSA (classical) signature verified successfully")
         print(f"✓ Client derived session key: {client_session_key.hex()}")
-        print(f"≈ Kyber ciphertext for server: {kyber_ciphertext[:32].hex()}... (truncated)")
         
     except Exception as e:
-        print(f"✗ Signature verification failed: {e}")
-        print(f"  Handshake aborted - MITM attack detected!")
-        return False
-    
-    print(f"\n→ Client sends to Server: kyber_ciphertext")
+        pytest.fail(f"Signature verification failed unexpectedly: {e}")
     
     # ==========================================================================
     # PHASE 4: Server key derivation
@@ -113,7 +110,7 @@ def test_protocol_3_4_with_classes():
     print("\n[PHASE 4] Server Shared Secret Derivation")
     print("-" * 70)
     
-    server_session_key = server.phase4_derive_session_key(client_pk_dh, kyber_ciphertext)
+    server_session_key = server.phase4_derive_session_key(client_pk_dh)
     print(f"✓ Server computed shared secrets and derived session key")
     print(f"  Session key: {server_session_key.hex()}")
     
@@ -128,8 +125,7 @@ def test_protocol_3_4_with_classes():
         print(f"✓ Client and Server session keys MATCH")
         print(f"  Key: {client_session_key.hex()}")
     else:
-        print(f"✗ Session keys DO NOT match - ERROR!")
-        return False
+        pytest.fail("Session keys do not match")
     
     # ==========================================================================
     # Post-Handshake: HMAC message authentication
@@ -146,8 +142,7 @@ def test_protocol_3_4_with_classes():
         print(f"  Message: {message.decode()}")
         print(f"  HMAC: {client_tag.hex()}")
     else:
-        print(f"✗ HMAC verification failed")
-        return False
+        pytest.fail("HMAC verification failed")
     
     print("\n" + "=" * 70)
     print("✓ PROTOCOL 3.4 TEST PASSED!")
@@ -160,8 +155,9 @@ def test_protocol_3_4_with_classes():
     print(f"- Session key: 32 bytes (hybrid DH || Kyber)")
     print(f"- Post-handshake: HMAC-SHA256 for message integrity")
     print()
-    
-    return True
+
+    assert client_session_key == server_session_key
+    assert client_tag == server_tag
 
 
 def test_protocol_3_4_mitm_detection():
@@ -195,26 +191,21 @@ def test_protocol_3_4_mitm_detection():
     
     print("\n[PHASE 2] ATTACKER intercepts and substitutes own ephemeral keys")
     # Attacker responds on behalf of server with DUAL signatures
-    attacker_pk_dh, attacker_pk_kyber, attacker_sig_dilithium, attacker_sig_ecdsa = attacker_server.phase2_generate_ephemeral_and_sign(
+    attacker_pk_dh, attacker_kyber_ciphertext, attacker_sig_dilithium, attacker_sig_ecdsa = attacker_server.phase2_generate_ephemeral_and_sign(
         client_pk_dh, client_pk_kyber
     )
-    print(f"ATTACKER → CLIENT: (pk_dh_attacker, pk_kyber_attacker, sig_dilithium_attacker, sig_ecdsa_attacker)")
+    print(f"ATTACKER → CLIENT: (pk_dh_attacker, kyber_ciphertext_attacker, sig_dilithium_attacker, sig_ecdsa_attacker)")
     
     print("\n[PHASE 3] Client verifies DUAL signatures")
-    try:
-        # Client tries to verify attacker's signatures with legitimate server's keys
-        # This SHOULD fail because attacker's signatures are signed with attacker's keys
-        client_session_key, kyber_ct = client.phase3_verify_phase4_derive(
-            attacker_pk_dh, attacker_pk_kyber, attacker_sig_dilithium, attacker_sig_ecdsa
+    # Client tries to verify attacker's signatures with legitimate server's keys.
+    # This SHOULD fail because attacker's signatures are signed with attacker's keys.
+    with pytest.raises(Exception):
+        client_session_key = client.phase3_verify_phase4_derive(
+            attacker_pk_dh, attacker_kyber_ciphertext, attacker_sig_dilithium, attacker_sig_ecdsa
         )
-        print(f"✗ SECURITY FAILURE: BOTH signatures should have failed but didn't!")
-        return False
-        
-    except Exception as e:
-        print(f"✓ DUAL signature verification FAILED (as expected)")
-        print(f"  Reason: {e}")
-        print(f"  Handshake aborted - MITM attack detected by BOTH authentication schemes!")
-        return True
+
+    print(f"✓ DUAL signature verification FAILED (as expected)")
+    print(f"  Handshake aborted - MITM attack detected by BOTH authentication schemes!")
 
 
 if __name__ == "__main__":
