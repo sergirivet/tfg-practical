@@ -1,4 +1,6 @@
 import secrets
+
+from primitives.base import KEM
 from primitives.kdf.hkdf import hkdf_extract, hkdf_expand
 
 def int_to_bytes(x):
@@ -136,6 +138,22 @@ def dh_shared_secret(private_key, public_key):
     k = bytes_to_int_le(private_key)
     result = x25519_scalar_mult(k, u)
     return int_to_bytes_le(result)
+
+
+class X25519Engine(KEM):
+    """Concrete KEM adapter for X25519 Diffie-Hellman."""
+
+    def keygen(self):
+        private_key, public_key = dh_keygen()
+        return private_key, public_key
+
+    def encapsulate(self, public_key: bytes):
+        private_key, ephemeral_public_key = dh_keygen()
+        shared_secret = dh_shared_secret(private_key, public_key)
+        return shared_secret, ephemeral_public_key
+
+    def decapsulate(self, secret_key: bytes, ciphertext: bytes) -> bytes:
+        return dh_shared_secret(secret_key, ciphertext)
 
 # ============================================================================
 # Legacy KEM functions (kept for backward compatibility with old tests)

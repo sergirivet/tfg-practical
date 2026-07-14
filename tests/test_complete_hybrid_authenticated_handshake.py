@@ -9,10 +9,10 @@ This is the recommended way to use the protocol in practice.
 
 import pytest
 
+from primitives.authentication.hybrid import HybridSignatureEngine
+from primitives.kem.hybrid import HybridKEMEngine
 from protocol.client import Client
 from protocol.server import Server
-from primitives.authentication.quantum import generate_keypair as generate_keypair_dilithium
-from primitives.authentication.classical import generate_keypair as generate_keypair_ecdsa
 from primitives.kdf.hmac import hmac_sha256
 
 
@@ -37,14 +37,14 @@ def test_protocol_3_4_with_classes():
     print("\n[PHASE 0] Server Long-Term Key Setup (DUAL KEYS)")
     print("-" * 70)
     
-    # Server generates BOTH classical and post-quantum signing keys
-    server_signing_public_dilithium, server_signing_private_dilithium = generate_keypair_dilithium()
-    server_signing_public_ecdsa, server_signing_private_ecdsa = generate_keypair_ecdsa()
+    kem_engine = HybridKEMEngine()
+    signature_engine = HybridSignatureEngine()
+
+    # Server generates the hybrid signing key pair through the injected engine.
+    server_signing_private, server_signing_public = signature_engine.keygen()
     
-    print(f"✓ Server generated Dilithium (ML-DSA-44) signing key pair")
-    print(f"  Public key (for PQ auth): {server_signing_public_dilithium[:32].hex()}... (truncated)")
-    print(f"✓ Server generated ECDSA (P-256) signing key pair")
-    print(f"  Public key (for classical auth): {server_signing_public_ecdsa[:50].hex()}... (truncated)")
+    print(f"✓ Server generated hybrid signing key pair")
+    print(f"  Public key blob: {server_signing_public[:32].hex()}... (truncated)")
     
     # ==========================================================================
     # PHASE 1: Client initialization
@@ -53,16 +53,15 @@ def test_protocol_3_4_with_classes():
     print("-" * 70)
     
     # Create client with server's BOTH public keys (obtained through trusted channel)
-    client = Client(server_signing_public_dilithium, server_signing_public_ecdsa)
-    print(f"✓ Client created with server's trusted DUAL public keys")
+    client = Client(server_signing_public, kem_engine, signature_engine)
+    print(f"✓ Client created with server's trusted public key blob")
     
     # Client generates ephemeral keys
-    client_pk_dh, client_pk_kyber = client.phase1_generate_ephemeral_keys()
+    client_public_key = client.phase1_generate_ephemeral_keys()
     print(f"✓ Client generated ephemeral keys")
-    print(f"  Ephemeral DH public: {client_pk_dh.hex()}")
-    print(f"  Ephemeral Kyber public: {client_pk_kyber[:32].hex()}... (truncated)")
+    print(f"  Client hello blob: {client_public_key.hex()}")
     
-    print(f"\n→ Client sends to Server: (pk_dh_c, pk_kyber_c)")
+    print(f"\n→ Client sends to Server: client_hello_blob")
     
     # ==========================================================================
     # PHASE 2: Server response
@@ -71,20 +70,16 @@ def test_protocol_3_4_with_classes():
     print("-" * 70)
     
     # Create server with BOTH long-term signing keys
-    server = Server(server_signing_private_dilithium, server_signing_private_ecdsa)
-    print(f"✓ Server initialized with long-term DUAL signing keys")
+    server = Server(server_signing_private, kem_engine, signature_engine)
+    print(f"✓ Server initialized with long-term hybrid signing key")
     
-    # Server responds to client with a ciphertext and creates DUAL signatures
-    server_pk_dh, server_kyber_ciphertext, signature_dilithium, signature_ecdsa = server.phase2_generate_ephemeral_and_sign(
-        client_pk_dh, client_pk_kyber
-    )
-    print(f"✓ Server generated DH key, encapsulated Kyber secret, and signed with BOTH schemes")
-    print(f"  Ephemeral DH public: {server_pk_dh.hex()}")
-    print(f"  Kyber ciphertext: {server_kyber_ciphertext[:32].hex()}... (truncated)")
-    print(f"  Dilithium signature: {signature_dilithium[:32].hex()}... (truncated)")
-    print(f"  ECDSA signature: {signature_ecdsa[:32].hex()}... (truncated)")
+    # Server responds to client with a ciphertext and creates a hybrid signature blob.
+    server_ciphertext, signature_blob = server.phase2_generate_ephemeral_and_sign(client_public_key)
+    print(f"✓ Server encapsulated the hybrid secret and signed the transcript")
+    print(f"  Server response blob: {server_ciphertext[:32].hex()}... (truncated)")
+    print(f"  Signature blob: {signature_blob[:32].hex()}... (truncated)")
     
-    print(f"\n→ Server sends to Client: (pk_dh_s, kyber_ciphertext, sig_dilithium, sig_ecdsa)")
+    print(f"\n→ Server sends to Client: (server_response_blob, signature_blob)")
     
     # ==========================================================================
     # PHASE 3: Client verification
@@ -94,11 +89,8 @@ def test_protocol_3_4_with_classes():
     
     try:
         # Client verifies BOTH signatures and derives session key
-        client_session_key = client.phase3_verify_phase4_derive(
-            server_pk_dh, server_kyber_ciphertext, signature_dilithium, signature_ecdsa
-        )
-        print(f"✓ Dilithium (post-quantum) signature verified successfully")
-        print(f"✓ ECDSA (classical) signature verified successfully")
+        client_session_key = client.phase3_verify_phase4_derive(server_ciphertext, signature_blob)
+        print(f"✓ Hybrid signature verified successfully")
         print(f"✓ Client derived session key: {client_session_key.hex()}")
         
     except Exception as e:
@@ -110,7 +102,7 @@ def test_protocol_3_4_with_classes():
     print("\n[PHASE 4] Server Shared Secret Derivation")
     print("-" * 70)
     
-    server_session_key = server.phase4_derive_session_key(client_pk_dh)
+    server_session_key = server.phase4_derive_session_key(client_public_key)
     print(f"✓ Server computed shared secrets and derived session key")
     print(f"  Session key: {server_session_key.hex()}")
     
@@ -149,10 +141,9 @@ def test_protocol_3_4_with_classes():
     print("=" * 70)
     print()
     print("Summary:")
-    print(f"- Authentication: DUAL SIGNATURES (classical ECDSA + post-quantum Dilithium)")
-    print(f"- DH: X25519 (classical, forward-secret)")
-    print(f"- PQ-KEM: ML-KEM-512 (post-quantum security)")
-    print(f"- Session key: 32 bytes (hybrid DH || Kyber)")
+    print(f"- Authentication: hybrid signature blob (classical + post-quantum)")
+    print(f"- KEM: hybrid packed key exchange (classical + post-quantum)")
+    print(f"- Session key: 32 bytes derived inside the KEM engine")
     print(f"- Post-handshake: HMAC-SHA256 for message integrity")
     print()
 
@@ -172,40 +163,38 @@ def test_protocol_3_4_mitm_detection():
     print("TEST: Protocol 3.4 - MITM Attack Detection (DUAL SIGNATURES)")
     print("=" * 70)
     
-    # Setup legitimate server with DUAL keys
-    server_signing_public_dilithium, server_signing_private_dilithium = generate_keypair_dilithium()
-    server_signing_public_ecdsa, server_signing_private_ecdsa = generate_keypair_ecdsa()
-    server = Server(server_signing_private_dilithium, server_signing_private_ecdsa)
+    kem_engine = HybridKEMEngine()
+    signature_engine = HybridSignatureEngine()
+
+    # Setup legitimate server with hybrid keys
+    server_signing_private, server_signing_public = signature_engine.keygen()
+    server = Server(server_signing_private, kem_engine, signature_engine)
     
-    # Attacker's DUAL keys
-    attacker_signing_public_dilithium, attacker_signing_private_dilithium = generate_keypair_dilithium()
-    attacker_signing_public_ecdsa, attacker_signing_private_ecdsa = generate_keypair_ecdsa()
-    attacker_server = Server(attacker_signing_private_dilithium, attacker_signing_private_ecdsa)
+    # Attacker's hybrid keys
+    attacker_signature_engine = HybridSignatureEngine()
+    attacker_signing_private, attacker_signing_public = attacker_signature_engine.keygen()
+    attacker_server = Server(attacker_signing_private, kem_engine, attacker_signature_engine)
     
     # Client (who doesn't know about the attacker)
-    client = Client(server_signing_public_dilithium, server_signing_public_ecdsa)  # Uses legitimate server's keys
+    client = Client(server_signing_public, kem_engine, signature_engine)  # Uses legitimate server's keys
     
     print("\n[PHASE 1] Client generates and sends ephemeral keys")
-    client_pk_dh, client_pk_kyber = client.phase1_generate_ephemeral_keys()
-    print(f"CLIENT → SERVER: (pk_dh_c, pk_kyber_c)")
+    client_public_key = client.phase1_generate_ephemeral_keys()
+    print(f"CLIENT → SERVER: client_hello_blob")
     
     print("\n[PHASE 2] ATTACKER intercepts and substitutes own ephemeral keys")
-    # Attacker responds on behalf of server with DUAL signatures
-    attacker_pk_dh, attacker_kyber_ciphertext, attacker_sig_dilithium, attacker_sig_ecdsa = attacker_server.phase2_generate_ephemeral_and_sign(
-        client_pk_dh, client_pk_kyber
-    )
-    print(f"ATTACKER → CLIENT: (pk_dh_attacker, kyber_ciphertext_attacker, sig_dilithium_attacker, sig_ecdsa_attacker)")
+    # Attacker responds on behalf of server with a hybrid signature blob
+    attacker_ciphertext, attacker_signature = attacker_server.phase2_generate_ephemeral_and_sign(client_public_key)
+    print(f"ATTACKER → CLIENT: (server_response_blob, signature_blob)")
     
     print("\n[PHASE 3] Client verifies DUAL signatures")
     # Client tries to verify attacker's signatures with legitimate server's keys.
     # This SHOULD fail because attacker's signatures are signed with attacker's keys.
     with pytest.raises(Exception):
-        client_session_key = client.phase3_verify_phase4_derive(
-            attacker_pk_dh, attacker_kyber_ciphertext, attacker_sig_dilithium, attacker_sig_ecdsa
-        )
+        client_session_key = client.phase3_verify_phase4_derive(attacker_ciphertext, attacker_signature)
 
-    print(f"✓ DUAL signature verification FAILED (as expected)")
-    print(f"  Handshake aborted - MITM attack detected by BOTH authentication schemes!")
+    print(f"✓ Hybrid signature verification FAILED (as expected)")
+    print(f"  Handshake aborted - MITM attack detected by the authentication layer!")
 
 
 if __name__ == "__main__":

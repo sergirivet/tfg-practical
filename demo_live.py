@@ -21,8 +21,8 @@ import struct
 import threading
 import queue
 
-from primitives.authentication.classical import generate_keypair as generate_ecdsa_keypair
-from primitives.authentication.quantum import generate_keypair as generate_dilithium_keypair
+from primitives.authentication.hybrid import HybridSignatureEngine
+from primitives.kem.hybrid import HybridKEMEngine
 from protocol.client import Client
 from protocol.server import Server
 
@@ -71,8 +71,9 @@ def server_worker(
     ready_event: threading.Event,
     done_event: threading.Event,
     error_queue: "queue.Queue[str]",
-    server_signing_private_dilithium: bytes,
-    server_signing_private_ecdsa: bytes,
+    server_signing_private: bytes,
+    kem_engine: HybridKEMEngine,
+    signature_engine: HybridSignatureEngine,
 ) -> None:
     """Background server thread: accept, handshake, decrypt, and close cleanly."""
     server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -87,26 +88,20 @@ def server_worker(
         conn.settimeout(SOCKET_TIMEOUT_SECONDS)
 
         with conn:
-            server = Server(server_signing_private_dilithium, server_signing_private_ecdsa)
+            server = Server(server_signing_private, kem_engine, signature_engine)
 
             # Receive Phase 1 client material.
-            client_pk_dh = _recv_blob(conn)
-            client_pk_kyber = _recv_blob(conn)
+            client_public_key = _recv_blob(conn)
 
             # Perform Phase 2 on the server side.
-            server_pk_dh, server_kyber_ciphertext, sig_dilithium, sig_ecdsa = server.phase2_generate_ephemeral_and_sign(
-                client_pk_dh,
-                client_pk_kyber,
-            )
+            server_ciphertext, signature = server.phase2_generate_ephemeral_and_sign(client_public_key)
 
             # Send Phase 2 response back to the client.
-            _send_blob(conn, server_pk_dh)
-            _send_blob(conn, server_kyber_ciphertext)
-            _send_blob(conn, sig_dilithium)
-            _send_blob(conn, sig_ecdsa)
+            _send_blob(conn, server_ciphertext)
+            _send_blob(conn, signature)
 
             # Complete Phase 4 and instantiate the RecordSession.
-            server.phase4_derive_session_key(client_pk_dh)
+            server.phase4_derive_session_key(client_public_key)
 
             # Receive one encrypted application record and decrypt it.
             incoming_frame = _recv_record_frame(conn)
@@ -133,8 +128,9 @@ def client_worker(
     ready_event: threading.Event,
     done_event: threading.Event,
     error_queue: "queue.Queue[str]",
-    server_signing_public_dilithium: bytes,
-    server_signing_public_ecdsa: bytes,
+    server_signing_public: bytes,
+    kem_engine: HybridKEMEngine,
+    signature_engine: HybridSignatureEngine,
 ) -> None:
     """Background client thread: connect, handshake, send data, and close cleanly."""
     if not ready_event.wait(timeout=SOCKET_TIMEOUT_SECONDS):
@@ -144,25 +140,17 @@ def client_worker(
     client_sock.settimeout(SOCKET_TIMEOUT_SECONDS)
 
     try:
-        client = Client(server_signing_public_dilithium, server_signing_public_ecdsa)
+        client = Client(server_signing_public, kem_engine, signature_engine)
 
         # Phase 1: client generates ephemeral keys and sends them.
-        client_pk_dh, client_pk_kyber = client.phase1_generate_ephemeral_keys()
-        _send_blob(client_sock, client_pk_dh)
-        _send_blob(client_sock, client_pk_kyber)
+        client_public_key = client.phase1_generate_ephemeral_keys()
+        _send_blob(client_sock, client_public_key)
 
         # Phase 2: receive the server response containing keys and dual signatures.
-        server_pk_dh = _recv_blob(client_sock)
-        server_kyber_ciphertext = _recv_blob(client_sock)
-        sig_dilithium = _recv_blob(client_sock)
-        sig_ecdsa = _recv_blob(client_sock)
+        server_ciphertext = _recv_blob(client_sock)
+        signature = _recv_blob(client_sock)
 
-        client.phase3_verify_phase4_derive(
-            server_pk_dh,
-            server_kyber_ciphertext,
-            sig_dilithium,
-            sig_ecdsa,
-        )
+        client.phase3_verify_phase4_derive(server_ciphertext, signature)
 
         # Send encrypted application data.
         frame = client.send_application_data(b"Post-Quantum Secured Message over AES-GCM")
@@ -184,10 +172,12 @@ def client_worker(
 
 
 def main() -> int:
+    kem_engine = HybridKEMEngine()
+    signature_engine = HybridSignatureEngine()
+
     # Trusted long-term signing keys for the server.
     # In a real deployment these would be provisioned via certificates or another PKI channel.
-    server_signing_public_dilithium, server_signing_private_dilithium = generate_dilithium_keypair()
-    server_signing_public_ecdsa, server_signing_private_ecdsa = generate_ecdsa_keypair()
+    server_signing_private, server_signing_public = signature_engine.keygen()
 
     ready_event = threading.Event()
     server_done = threading.Event()
@@ -200,8 +190,9 @@ def main() -> int:
             ready_event,
             server_done,
             error_queue,
-            server_signing_private_dilithium,
-            server_signing_private_ecdsa,
+            server_signing_private,
+            kem_engine,
+            signature_engine,
         ),
         daemon=True,
     )
@@ -211,8 +202,9 @@ def main() -> int:
             ready_event,
             client_done,
             error_queue,
-            server_signing_public_dilithium,
-            server_signing_public_ecdsa,
+            server_signing_public,
+            kem_engine,
+            signature_engine,
         ),
         daemon=True,
     )

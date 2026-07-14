@@ -27,6 +27,8 @@ Security Considerations:
 
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
+
+from primitives.base import SignatureScheme
 from cryptography.hazmat.backends import default_backend
 
 # ============================================================================
@@ -151,3 +153,17 @@ def verify(public_key, message, signature):
     except Exception:
         # Any verification failure (invalid signature, corrupted data, etc.)
         return False
+
+
+class ECDSAP256Engine(SignatureScheme):
+    """Concrete signature adapter for ECDSA over P-256."""
+
+    def keygen(self):
+        public_key, private_key = generate_keypair()
+        return private_key, public_key
+
+    def sign(self, private_key: bytes, message: bytes) -> bytes:
+        return sign(private_key, message)
+
+    def verify(self, public_key: bytes, message: bytes, signature: bytes) -> bool:
+        return verify(public_key, message, signature)

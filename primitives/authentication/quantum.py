@@ -20,6 +20,8 @@ Usage Context:
 
 from dilithium_py.ml_dsa import ML_DSA_44
 
+from primitives.base import SignatureScheme
+
 # ============================================================================
 # Post-Quantum Digital Signature Interface (ML-DSA-44 / Dilithium)
 # ============================================================================
@@ -143,3 +145,17 @@ def build_handshake_transcript(client_dh_pub, client_kyber_pub, server_dh_pub, s
     )
     
     return transcript
+
+
+class MLDSA44Engine(SignatureScheme):
+    """Concrete signature adapter for ML-DSA-44 / Dilithium."""
+
+    def keygen(self):
+        public_key, private_key = generate_keypair()
+        return private_key, public_key
+
+    def sign(self, private_key: bytes, message: bytes) -> bytes:
+        return sign(private_key, message)
+
+    def verify(self, public_key: bytes, message: bytes, signature: bytes) -> bool:
+        return verify(public_key, message, signature)
