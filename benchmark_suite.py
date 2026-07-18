@@ -47,11 +47,10 @@ from primitives.authentication.classical import (
 )
 
 # Post-Quantum Signatures (ML-DSA-44 / Dilithium)
-from primitives.authentication.quantum import (
-    generate_keypair as dilithium_keygen,
-    sign as dilithium_sign,
-    verify as dilithium_verify,
-)
+from primitives.authentication.quantum import MLDSA44Engine
+
+
+dilithium_engine = MLDSA44Engine()
 
 
 # ============================================================================
@@ -275,7 +274,7 @@ def scenario_post_quantum() -> Tuple[LatencyMetrics, PayloadMetrics, Dict, Compo
         (LatencyMetrics, PayloadMetrics, component_sizes, component_timings)
     """
     # Generate long-term signing keys (one-time)
-    dilithium_pk, dilithium_sk = dilithium_keygen()
+    dilithium_sk, dilithium_pk = dilithium_engine.keygen()
     
     def full_scenario():
         """Simulate one complete post-quantum handshake and measure component times."""
@@ -292,7 +291,7 @@ def scenario_post_quantum() -> Tuple[LatencyMetrics, PayloadMetrics, Dict, Compo
         
         ct_kyber_client, ss_server = kyber_encapsulate(client_pk_kyber)
         transcript = client_pk_kyber + ct_kyber_client
-        sig_dilithium = dilithium_sign(dilithium_sk, transcript)
+        sig_dilithium = dilithium_engine.sign(dilithium_sk, transcript)
         
         end_encap = time.perf_counter()
         encap_ms = (end_encap - start_encap) * 1000
@@ -301,7 +300,7 @@ def scenario_post_quantum() -> Tuple[LatencyMetrics, PayloadMetrics, Dict, Compo
         start_verif = time.perf_counter()
         
         ss_client = kyber_decapsulate(ct_kyber_client, client_sk_kyber)
-        dilithium_verify(dilithium_pk, transcript, sig_dilithium)
+        dilithium_engine.verify(dilithium_pk, transcript, sig_dilithium)
         
         end_verif = time.perf_counter()
         verif_ms = (end_verif - start_verif) * 1000
@@ -435,7 +434,7 @@ def scenario_full_hybrid() -> Tuple[LatencyMetrics, PayloadMetrics, Dict, Compon
     """
     # Generate long-term signing keys
     ecdsa_pk, ecdsa_sk = ecdsa_keygen()
-    dilithium_pk, dilithium_sk = dilithium_keygen()
+    dilithium_sk, dilithium_pk = dilithium_engine.keygen()
     
     def full_scenario():
         """Simulate one complete full hybrid handshake and measure component times."""
@@ -456,7 +455,7 @@ def scenario_full_hybrid() -> Tuple[LatencyMetrics, PayloadMetrics, Dict, Compon
         ct_kyber, ss_kyber_server = kyber_encapsulate(client_pk_kyber)
         transcript = client_pk_dh + client_pk_kyber + server_pk_dh + ct_kyber
         sig_ecdsa = ecdsa_sign(ecdsa_sk, transcript)
-        sig_dilithium = dilithium_sign(dilithium_sk, transcript)
+        sig_dilithium = dilithium_engine.sign(dilithium_sk, transcript)
         
         end_encap = time.perf_counter()
         encap_ms = (end_encap - start_encap) * 1000
@@ -467,7 +466,7 @@ def scenario_full_hybrid() -> Tuple[LatencyMetrics, PayloadMetrics, Dict, Compon
         ss_dh_client = dh_shared_secret(client_sk_dh, server_pk_dh)
         ss_kyber_client = kyber_decapsulate(ct_kyber, client_sk_kyber)
         ecdsa_verify(ecdsa_pk, transcript, sig_ecdsa)
-        dilithium_verify(dilithium_pk, transcript, sig_dilithium)
+        dilithium_engine.verify(dilithium_pk, transcript, sig_dilithium)
         
         end_verif = time.perf_counter()
         verif_ms = (end_verif - start_verif) * 1000

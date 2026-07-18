@@ -5,7 +5,12 @@ This test validates that both classical and post-quantum signatures work correct
 independently and can be used together for defense-in-depth authentication.
 """
 
-from primitives.authentication import classical as ecdsa, quantum as dilithium_sig
+from primitives.authentication.classical import ECDSAP256Engine
+from primitives.authentication.quantum import MLDSA44Engine
+
+
+ecdsa = ECDSAP256Engine()
+dilithium_sig = MLDSA44Engine()
 
 
 def test_ecdsa_signatures():
@@ -17,7 +22,7 @@ def test_ecdsa_signatures():
     # Test 1: Key generation
     print("\n[TEST 1] ECDSA Key Pair Generation")
     print("-" * 70)
-    pub_key, priv_key = ecdsa.generate_keypair()
+    priv_key, pub_key = ecdsa.keygen()
     print(f"✓ Generated ECDSA key pair")
     print(f"  Public key (first 50 chars): {str(pub_key)[:50]}...")
     print(f"  Private key (first 50 chars): {str(priv_key)[:50]}...")
@@ -46,7 +51,7 @@ def test_ecdsa_signatures():
     # Test 4: Wrong key
     print("\n[TEST 4] ECDSA Verification with Different Key")
     print("-" * 70)
-    other_pub_key, _ = ecdsa.generate_keypair()
+    _, other_pub_key = ecdsa.keygen()
     result = ecdsa.verify(other_pub_key, message, signature)
     print(f"  Original signer vs. different public key")
     print(f"✗ Verification result (should be False): {result}")
@@ -64,7 +69,7 @@ def test_dilithium_signatures():
     # Test 1: Key generation
     print("\n[TEST 1] Dilithium Key Pair Generation")
     print("-" * 70)
-    pub_key, priv_key = dilithium_sig.generate_keypair()
+    priv_key, pub_key = dilithium_sig.keygen()
     print(f"✓ Generated Dilithium key pair")
     print(f"  Public key size: {len(pub_key)} bytes")
     print(f"  Private key size: {len(priv_key)} bytes")
@@ -95,7 +100,7 @@ def test_dilithium_signatures():
     # Test 4: Wrong key
     print("\n[TEST 4] Dilithium Verification with Different Key")
     print("-" * 70)
-    other_pub_key, _ = dilithium_sig.generate_keypair()
+    _, other_pub_key = dilithium_sig.keygen()
     result = dilithium_sig.verify(other_pub_key, message, signature)
     print(f"  Original signer vs. different public key")
     print(f"✗ Verification result (should be False): {result}")
@@ -113,8 +118,8 @@ def test_hybrid_authentication():
     # Setup: Generate both key pairs
     print("\n[SETUP] Generate Dual Signature Keys")
     print("-" * 70)
-    ecdsa_pub, ecdsa_priv = ecdsa.generate_keypair()
-    dilithium_pub, dilithium_priv = dilithium_sig.generate_keypair()
+    ecdsa_priv, ecdsa_pub = ecdsa.keygen()
+    dilithium_priv, dilithium_pub = dilithium_sig.keygen()
     print(f"✓ Generated ECDSA P-256 key pair")
     print(f"✓ Generated Dilithium ML-DSA-44 key pair")
     

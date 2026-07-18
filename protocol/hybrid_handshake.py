@@ -1,5 +1,10 @@
+from primitives.base import pack_length_prefixed
 from primitives.kdf.hkdf import hkdf_extract, hkdf_expand
-from primitives import authentication
+from primitives.authentication.classical import sign as ecdsa_sign, verify as ecdsa_verify
+from primitives.authentication.quantum import MLDSA44Engine
+
+
+_dilithium_engine = MLDSA44Engine()
 
 def hybrid_session_key(dh_secret, pq_secret, context=b""):
     """Derive hybrid session key combining classical and post-quantum secrets.
@@ -112,14 +117,16 @@ def server_sign_handshake(server_signing_private_key_dilithium,
         Called by server after generating ephemeral keys, before sending response to client.
     """
     # Build canonical transcript of all ephemeral public keys
-    transcript = authentication.quantum.build_handshake_transcript(
-        client_dh_pub, client_kyber_pub,
-        server_dh_pub, server_kyber_ct
+    transcript = pack_length_prefixed(
+        client_dh_pub,
+        client_kyber_pub,
+        server_dh_pub,
+        server_kyber_ct,
     )
     
     # Sign transcript with BOTH schemes for defense-in-depth
-    signature_dilithium = authentication.quantum.sign(server_signing_private_key_dilithium, transcript)
-    signature_ecdsa = authentication.classical.sign(server_signing_private_key_ecdsa, transcript)
+    signature_dilithium = _dilithium_engine.sign(server_signing_private_key_dilithium, transcript)
+    signature_ecdsa = ecdsa_sign(server_signing_private_key_ecdsa, transcript)
     
     return signature_dilithium, signature_ecdsa
 
@@ -166,14 +173,16 @@ def client_verify_handshake(server_signing_public_key_dilithium,
         Called by client after receiving server's response, BEFORE deriving secrets.
     """
     # Reconstruct the same transcript that the server signed
-    transcript = authentication.quantum.build_handshake_transcript(
-        client_dh_pub, client_kyber_pub,
-        server_dh_pub, server_kyber_ct
+    transcript = pack_length_prefixed(
+        client_dh_pub,
+        client_kyber_pub,
+        server_dh_pub,
+        server_kyber_ct,
     )
     
     # Verify BOTH signatures independently
-    is_valid_dilithium = authentication.quantum.verify(server_signing_public_key_dilithium, transcript, signature_dilithium)
-    is_valid_ecdsa = authentication.classical.verify(server_signing_public_key_ecdsa, transcript, signature_ecdsa)
+    is_valid_dilithium = _dilithium_engine.verify(server_signing_public_key_dilithium, transcript, signature_dilithium)
+    is_valid_ecdsa = ecdsa_verify(server_signing_public_key_ecdsa, transcript, signature_ecdsa)
     
     # For hybrid authentication to succeed, BOTH must be valid
     if not is_valid_dilithium:
