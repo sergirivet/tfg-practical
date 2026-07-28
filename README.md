@@ -398,6 +398,77 @@ El proyecto incluye una **suite completa de benchmarking** (`benchmark_suite.py`
 
 ### Ejecución y Resultados
 
+## Cryptographic Agility & Dependency Injection
+
+Se ha refactorizado el código para lograr "cryptographic agility": el protocolo ya no instancia algoritmos concretos internamente, sino que recibe implementaciones ("engines") a través de inyección de dependencias. Esto permite sustituir implementaciones clásicas o post-cuánticas sin tocar la lógica del protocolo.
+
+- Interfaces principales: `KEM` y `SignatureScheme` en `primitives/base.py`.
+- Engines disponibles: `HybridKEMEngine`, `HybridSignatureEngine`, y adapters para X25519/ML-KEM-512/ECDSA/ML-DSA-44.
+
+Ejemplo mínimo de uso (inyección de engines):
+
+```python
+from primitives.kem.hybrid import HybridKEMEngine
+from primitives.authentication.hybrid import HybridSignatureEngine
+from protocol.client import Client
+from protocol.server import Server
+
+# Crear engines
+kem_engine = HybridKEMEngine()
+sig_engine = HybridSignatureEngine()
+
+# Generar clave de firma a largo plazo usando el engine (devuelve (sk, pk))
+server_signing_private, server_signing_public = sig_engine.keygen()
+
+# Inyectar engines en cliente y servidor
+client = Client(server_signing_public, kem_engine=kem_engine, signature_engine=sig_engine)
+server = Server(server_signing_private, kem_engine=kem_engine, signature_engine=sig_engine)
+
+# Ahora usar las APIs de Client/Server sin conocer los algoritmos concretos
+client_pk_dh, client_pk_kyber = client.phase1_generate_ephemeral_keys()
+server_pk_dh, server_kyber_ct, sig_dilithium, sig_ecdsa = server.phase2_generate_ephemeral_and_sign(
+  client_pk_dh, client_pk_kyber
+)
+client_session_key = client.phase3_verify_phase4_derive(
+  server_pk_dh, server_kyber_ct, sig_dilithium, sig_ecdsa
+)
+```
+
+Notas rápidas:
+- Para alcanzar "100% cryptographic agility" también se puede parametrizar la `RecordSession` (AEAD) si se desea sustituir AES-GCM por otro AEAD.
+- Los tests y `demo_live.py` ya usan el mecanismo de inyección de engines.
+
+## RecordSession - Ejemplo de AEAD alternativo
+
+La clase `RecordSession` acepta un parámetro `aead_cls` para permitir cambiar la primitive AEAD por otra implementación compatible. Por ejemplo, para usar `ChaCha20Poly1305` en lugar de `AESGCM`:
+
+```python
+from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
+from protocol.record_layer import RecordSession
+
+master_secret = b"\x00" * 32
+# role: "client" o "server"; aead_key_len y aead_iv_len son opcionales
+rs = RecordSession(master_secret, role="client", aead_cls=ChaCha20Poly1305, aead_key_len=32, aead_iv_len=12)
+```
+
+Cambiar el AEAD permite evaluar alternativas por rendimiento o por requisitos de plataforma.
+
+## Ejecutar tests (entorno virtual)
+
+Si usas el entorno virtual del proyecto (`.venv`), ejecuta los tests con el intérprete del workspace (recomendado):
+
+```bash
+# activar venv (opcional)
+source .venv/bin/activate
+
+# ejecutar tests usando el intérprete del venv
+.venv/bin/python -m pytest -q
+```
+
+Estado actual de la suite: `11 passed` (ejecutado en el entorno local de desarrollo).
+
+
+
 ```bash
 # Ejecutar benchmarks (toma ~5-10 minutos)
 python benchmark_suite.py

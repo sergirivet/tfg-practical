@@ -133,6 +133,10 @@ class RecordSession:
         is_server: Optional[bool] = None,
         protocol_version: bytes = PROTOCOL_VERSION,
         teardown_callback: Optional[Callable[[], None]] = None,
+        # AEAD customization for cryptographic agility
+        aead_cls: Callable[[bytes], object] = AESGCM,
+        aead_key_len: int = 32,
+        aead_iv_len: int = 12,
     ):
         if not master_secret:
             raise ValueError("master_secret cannot be empty")
@@ -154,6 +158,9 @@ class RecordSession:
         self.role = role
         self.protocol_version = protocol_version
         self._teardown_callback = teardown_callback
+        self._aead_cls = aead_cls
+        self._aead_key_len = aead_key_len
+        self._aead_iv_len = aead_iv_len
 
         # Record-layer state is intentionally separate from the handshake state machine.
         self._closed = False
@@ -164,8 +171,8 @@ class RecordSession:
 
         self._traffic_keys = self._derive_traffic_keys(master_secret)
         self._send_key, self._send_iv, self._recv_key, self._recv_iv = self._select_directional_keys()
-        self._send_aesgcm = AESGCM(self._send_key)
-        self._recv_aesgcm = AESGCM(self._recv_key)
+        self._send_aead = self._aead_cls(self._send_key)
+        self._recv_aead = self._aead_cls(self._recv_key)
 
     @property
     def send_sequence_number(self) -> int:
@@ -195,22 +202,22 @@ class RecordSession:
         client_write_key = hkdf_expand(
             master_secret,
             self._KEY_INFO_PREFIX + self.protocol_version + b"|client write key",
-            32,
+            self._aead_key_len,
         )
         server_write_key = hkdf_expand(
             master_secret,
             self._KEY_INFO_PREFIX + self.protocol_version + b"|server write key",
-            32,
+            self._aead_key_len,
         )
         client_write_iv = hkdf_expand(
             master_secret,
             self._KEY_INFO_PREFIX + self.protocol_version + b"|client write iv",
-            12,
+            self._aead_iv_len,
         )
         server_write_iv = hkdf_expand(
             master_secret,
             self._KEY_INFO_PREFIX + self.protocol_version + b"|server write iv",
-            12,
+            self._aead_iv_len,
         )
 
         return TrafficKeys(
@@ -252,7 +259,7 @@ class RecordSession:
         ciphertext_length = len(plaintext) + 16
         header = self._build_header(content_type_value, ciphertext_length)
         aad = self._build_aad(header, sequence_number)
-        ciphertext = self._send_aesgcm.encrypt(_xor_nonce(self._send_iv, sequence_number), plaintext, aad)
+        ciphertext = self._send_aead.encrypt(_xor_nonce(self._send_iv, sequence_number), plaintext, aad)
 
         if len(ciphertext) > self.MAX_FRAGMENT_LENGTH:
             raise RecordLayerError("Encrypted record exceeds the protocol length limit")
@@ -277,7 +284,7 @@ class RecordSession:
         aad = self._build_aad(header, sequence_number)
 
         try:
-            plaintext = self._recv_aesgcm.decrypt(
+            plaintext = self._recv_aead.decrypt(
                 _xor_nonce(self._recv_iv, sequence_number),
                 ciphertext,
                 aad,

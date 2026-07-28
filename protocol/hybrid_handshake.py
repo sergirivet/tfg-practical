@@ -1,10 +1,7 @@
 from primitives.base import pack_length_prefixed
 from primitives.kdf.hkdf import hkdf_extract, hkdf_expand
-from primitives.authentication.classical import sign as ecdsa_sign, verify as ecdsa_verify
-from primitives.authentication.quantum import MLDSA44Engine
-
-
-_dilithium_engine = MLDSA44Engine()
+from primitives.authentication.hybrid import HybridSignatureEngine
+from primitives.base import SignatureScheme
 
 def hybrid_session_key(dh_secret, pq_secret, context=b""):
     """Derive hybrid session key combining classical and post-quantum secrets.
@@ -125,10 +122,19 @@ def server_sign_handshake(server_signing_private_key_dilithium,
     )
     
     # Sign transcript with BOTH schemes for defense-in-depth
-    signature_dilithium = _dilithium_engine.sign(server_signing_private_key_dilithium, transcript)
-    signature_ecdsa = ecdsa_sign(server_signing_private_key_ecdsa, transcript)
-    
-    return signature_dilithium, signature_ecdsa
+    # Backwards-compatible API: callers may pass two separate private keys
+    # (dilithium, ecdsa). Internally we prefer a composite signature engine.
+    signature_engine = HybridSignatureEngine()
+
+    # HybridSignatureEngine expects a packed private key in order (classical, quantum)
+    packed_private = pack_length_prefixed(server_signing_private_key_ecdsa, server_signing_private_key_dilithium)
+    packed_signature = signature_engine.sign(packed_private, transcript)
+
+    # Unpack to preserve the original return shape: (signature_dilithium, signature_ecdsa)
+    from primitives.base import unpack_length_prefixed
+
+    classical_sig, quantum_sig = unpack_length_prefixed(packed_signature, 2)
+    return quantum_sig, classical_sig
 
 
 def client_verify_handshake(server_signing_public_key_dilithium,
@@ -180,23 +186,34 @@ def client_verify_handshake(server_signing_public_key_dilithium,
         server_kyber_ct,
     )
     
-    # Verify BOTH signatures independently
-    is_valid_dilithium = _dilithium_engine.verify(server_signing_public_key_dilithium, transcript, signature_dilithium)
-    is_valid_ecdsa = ecdsa_verify(server_signing_public_key_ecdsa, transcript, signature_ecdsa)
-    
-    # For hybrid authentication to succeed, BOTH must be valid
-    if not is_valid_dilithium:
+    # Use the HybridSignatureEngine to verify both schemes while preserving
+    # per-scheme diagnostics for clearer error messages.
+    signature_engine = HybridSignatureEngine()
+
+    # Unpack public keys and signatures (Hybrid engine packs classical then quantum)
+    from primitives.base import unpack_length_prefixed
+
+    classical_pub = server_signing_public_key_ecdsa
+    quantum_pub = server_signing_public_key_dilithium
+
+    classical_sig = signature_ecdsa
+    quantum_sig = signature_dilithium
+
+    is_valid_classical = signature_engine.classical_engine.verify(classical_pub, transcript, classical_sig)
+    is_valid_quantum = signature_engine.quantum_engine.verify(quantum_pub, transcript, quantum_sig)
+
+    if not is_valid_quantum:
         raise AuthenticationError(
             "Handshake authentication failed: Dilithium (post-quantum) signature verification failed. "
             "Possible post-quantum MITM attack or corrupted PQ signature. Handshake aborted."
         )
-    
-    if not is_valid_ecdsa:
+
+    if not is_valid_classical:
         raise AuthenticationError(
             "Handshake authentication failed: ECDSA (classical) signature verification failed. "
             "Possible classical MITM attack or corrupted classical signature. Handshake aborted."
         )
-    
+
     return True
 
 
